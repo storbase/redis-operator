@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -45,7 +45,7 @@ type RedisReconciler struct {
 
 	Kube       appinterfaces.KubernetesClient
 	RedisAdmin appinterfaces.RedisAdminClient
-	Recorder   record.EventRecorder
+	Recorder   events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=redis.storbase.io,resources=redis,verbs=get;list;watch;create;update;patch;delete
@@ -136,7 +136,7 @@ func (r *RedisReconciler) emitWarning(redis *redisv1alpha1.Redis, reason, messag
 	if r.Recorder == nil {
 		return
 	}
-	r.Recorder.Eventf(redis, "Warning", reason, "%s", message)
+	r.Recorder.Eventf(redis, nil, "Warning", reason, "Reconcile", "%s", message)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -154,7 +154,7 @@ func (r *RedisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.RedisAdmin = redisinfra.NewAdminClient(r.Client)
 	}
 	if r.Recorder == nil {
-		r.Recorder = mgr.GetEventRecorderFor("redis-controller")
+		r.Recorder = mgr.GetEventRecorder("redis-controller")
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1alpha1.Redis{}).
