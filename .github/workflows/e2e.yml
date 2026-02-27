@@ -1,0 +1,50 @@
+name: E2E
+
+on:
+  pull_request:
+
+jobs:
+  e2e:
+    name: Run E2E on Kind
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        run: |
+          curl -sSL -o ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Install chainsaw
+        run: |
+          curl -sSL -o /tmp/chainsaw.tar.gz https://github.com/kyverno/chainsaw/releases/download/v0.2.11/chainsaw_linux_amd64.tar.gz
+          tar -xzf /tmp/chainsaw.tar.gz -C /tmp
+          sudo mv /tmp/chainsaw /usr/local/bin/chainsaw
+          chainsaw version
+
+      - name: Run e2e
+        env:
+          GOPROXY: https://goproxy.cn,direct
+        run: |
+          make e2e-pr
+
+      - name: Upload e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: test/e2e/artifacts
+          if-no-files-found: ignore

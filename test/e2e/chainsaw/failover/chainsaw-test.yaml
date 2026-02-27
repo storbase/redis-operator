@@ -1,0 +1,15 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: redis-failover-steady
+spec:
+  steps:
+  - name: apply-and-verify-failover-steady-state
+    try:
+    - apply:
+        file: redis.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_failover.sh redis-e2e redis-failover mymaster

@@ -28,5 +28,12 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
+.idea/
 # .vscode/
+
+# Local tool and test runtime artifacts
+bin/
+.cache/
+.gocache/
+.gomodcache/
+test/e2e/artifacts/

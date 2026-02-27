@@ -1,0 +1,14 @@
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-cluster
+  namespace: redis-e2e
+spec:
+  mode: Cluster
+  image: docker.io/library/redis:8.6.1
+  imagePullPolicy: IfNotPresent
+  cluster:
+    shards: 3
+    replicasPerShard: 1
+    storage:
+      size: 1Gi

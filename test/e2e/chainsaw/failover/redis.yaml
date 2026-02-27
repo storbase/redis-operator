@@ -1,0 +1,19 @@
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-failover
+  namespace: redis-e2e
+spec:
+  mode: Failover
+  image: docker.io/library/redis:8.6.1
+  imagePullPolicy: IfNotPresent
+  failover:
+    redisReplicas: 3
+    sentinelReplicas: 3
+    quorum: 2
+    masterName: mymaster
+    storage:
+      size: 1Gi
+  sentinelConfig:
+  - sentinel down-after-milliseconds mymaster 5000
+  - sentinel failover-timeout mymaster 60000
