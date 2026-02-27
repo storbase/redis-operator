@@ -199,7 +199,7 @@ e2e-local-up: e2e-kind-up e2e-check-tools-local ## Prepare cluster prerequisites
 	@if [ "$(E2E_LOCAL_DNS_SETUP)" = "true" ]; then \
 		$(MAKE) e2e-local-dns-up; \
 	fi
-	GOPROXY=https://goproxy.cn,direct make install
+	make install
 	@if [ "$(E2E_KTCTL_EXTERNAL_CONNECT)" = "true" ]; then \
 		$(MAKE) e2e-ensure-namespace; \
 	else \
@@ -255,8 +255,8 @@ e2e-local-down: ## Stop residual local e2e processes and ktctl resources.
 		ktctl clean --context "kind-$(E2E_KIND_CLUSTER)" --namespace "$(E2E_NAMESPACE)" --localOnly >/dev/null 2>&1 || true; \
 	fi
 
-.PHONY: e2e-pr
-e2e-pr: e2e-kind-up ## Run PR e2e path with kind + built image + make deploy.
+.PHONY: e2e
+e2e: e2e-kind-up ## Run e2e path with kind + built image + make deploy.
 	E2E_KIND_CLUSTER=$(E2E_KIND_CLUSTER) \
 	E2E_NAMESPACE=$(E2E_NAMESPACE) \
 	E2E_ARTIFACT_DIR_PR=$(E2E_ARTIFACT_DIR_PR) \

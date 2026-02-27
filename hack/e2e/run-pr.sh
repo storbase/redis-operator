@@ -25,8 +25,8 @@ trap cleanup EXIT
 "$container_tool" build -t "$image" .
 kind load docker-image "$image" --name "$cluster_name"
 
-GOPROXY=https://goproxy.cn,direct make install
-GOPROXY=https://goproxy.cn,direct make deploy IMG="$image"
+make install
+make deploy IMG="$image"
 
 "$kubectl_bin" -n "$operator_namespace" rollout status deployment/redis-operator-controller-manager --timeout=180s
 

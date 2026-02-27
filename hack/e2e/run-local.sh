@@ -95,7 +95,6 @@ if [ -n "$existing_8081_pid" ]; then
   fi
 fi
 
-GOPROXY=https://goproxy.cn,direct \
 GOCACHE="$(pwd)/.cache/go-build" \
 GOMODCACHE="$gomodcache" \
 REDIS_OPERATOR_DNS_SERVER="$operator_dns_server" \
