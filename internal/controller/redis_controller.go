@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -37,6 +39,8 @@ import (
 	"github.com/storbase/redis-operator/internal/kubeutil"
 	"github.com/storbase/redis-operator/internal/plan"
 )
+
+const runtimePrerequisitesRequeueAfter = 3 * time.Second
 
 // RedisReconciler reconciles a Redis object.
 type RedisReconciler struct {
@@ -93,6 +97,22 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	before := redis.DeepCopy()
+	if redis.Status.Endpoint != desired.Endpoint {
+		redis.Status.Endpoint = desired.Endpoint
+	}
+
+	runtimeReady, waitReason, err := r.runtimePrerequisitesReady(ctx, redis)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !runtimeReady {
+		if err := r.patchStatusIfChanged(ctx, before, redis); err != nil {
+			return ctrl.Result{}, err
+		}
+		log.Info("Runtime prerequisites are not ready, requeue", "reason", waitReason)
+		return ctrl.Result{RequeueAfter: runtimePrerequisitesRequeueAfter}, nil
+	}
+
 	switch redis.Spec.Mode {
 	case redisv1alpha1.RedisModeCluster:
 		if !clusterBootstrapCompleted(redis) {
@@ -115,16 +135,70 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
-	if redis.Status.Endpoint != desired.Endpoint {
-		redis.Status.Endpoint = desired.Endpoint
-	}
-	if !equality.Semantic.DeepEqual(before.Status, redis.Status) {
-		if err := r.Kube.PatchStatus(ctx, redis, client.MergeFrom(before)); err != nil {
-			return ctrl.Result{}, err
-		}
+	if err := r.patchStatusIfChanged(ctx, before, redis); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *RedisReconciler) runtimePrerequisitesReady(ctx context.Context, redis *redisv1alpha1.Redis) (bool, string, error) {
+	switch redis.Spec.Mode {
+	case redisv1alpha1.RedisModeCluster:
+		if redis.Spec.Cluster == nil {
+			return false, "spec.cluster is nil", nil
+		}
+		for shard := int32(0); shard < redis.Spec.Cluster.Shards; shard++ {
+			stsName := fmt.Sprintf("%s-shard-%d", redis.Name, shard)
+			ready, err := r.statefulSetReady(ctx, redis.Namespace, stsName)
+			if err != nil {
+				return false, "", err
+			}
+			if !ready {
+				return false, fmt.Sprintf("statefulset %s is not ready", stsName), nil
+			}
+		}
+	case redisv1alpha1.RedisModeFailover:
+		for _, stsName := range []string{
+			fmt.Sprintf("%s-redis", redis.Name),
+			fmt.Sprintf("%s-sentinel", redis.Name),
+		} {
+			ready, err := r.statefulSetReady(ctx, redis.Namespace, stsName)
+			if err != nil {
+				return false, "", err
+			}
+			if !ready {
+				return false, fmt.Sprintf("statefulset %s is not ready", stsName), nil
+			}
+		}
+	}
+	return true, "", nil
+}
+
+func (r *RedisReconciler) statefulSetReady(ctx context.Context, namespace, name string) (bool, error) {
+	sts := &appsv1.StatefulSet{}
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, sts); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	replicas := int32(1)
+	if sts.Spec.Replicas != nil {
+		replicas = *sts.Spec.Replicas
+	}
+	if sts.Status.ObservedGeneration < sts.Generation {
+		return false, nil
+	}
+	return sts.Status.ReadyReplicas >= replicas, nil
+}
+
+func (r *RedisReconciler) patchStatusIfChanged(ctx context.Context, before, after *redisv1alpha1.Redis) error {
+	if equality.Semantic.DeepEqual(before.Status, after.Status) {
+		return nil
+	}
+	return r.Kube.PatchStatus(ctx, after, client.MergeFrom(before))
 }
 
 func clusterBootstrapCompleted(redis *redisv1alpha1.Redis) bool {

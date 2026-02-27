@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +14,6 @@ import (
 
 	redisv1alpha1 "github.com/storbase/redis-operator/api/v1alpha1"
 	appinterfaces "github.com/storbase/redis-operator/internal/interfaces"
-	ctrlLog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -30,23 +28,13 @@ const (
 type AdminClient struct {
 	kube           client.Client
 	commandTimeout time.Duration
-	dnsServer      string
 }
 
 // NewAdminClient returns the default runtime Redis admin client.
 func NewAdminClient(kube client.Client) appinterfaces.RedisAdminClient {
-	dnsServer := strings.TrimSpace(os.Getenv("REDIS_OPERATOR_DNS_SERVER"))
-	logger := ctrlLog.Log.WithName("redis-admin")
-	if dnsServer == "" {
-		logger.Info("Redis admin client uses system DNS resolver")
-	} else {
-		logger.Info("Redis admin client uses custom DNS resolver", "dnsServer", dnsServer)
-	}
-
 	return &AdminClient{
 		kube:           kube,
 		commandTimeout: 5 * time.Second,
-		dnsServer:      dnsServer,
 	}
 }
 
@@ -162,59 +150,14 @@ func (c *AdminClient) newSentinelClient(addr, password string) *redis.SentinelCl
 }
 
 func (c *AdminClient) newRedisOptions(addr, password string) *redis.Options {
-	resolvedAddr := c.resolveAddr(addr)
 	options := &redis.Options{
-		Addr:         resolvedAddr,
+		Addr:         addr,
 		Password:     password,
 		DialTimeout:  3 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
 	}
-	if c.dnsServer == "" {
-		return options
-	}
-	options.Dialer = func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		if parsed := net.ParseIP(host); parsed != nil {
-			dialer := &net.Dialer{Timeout: 3 * time.Second}
-			return dialer.DialContext(ctx, network, address)
-		}
-		ips, err := c.lookupHost(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		if len(ips) == 0 {
-			return nil, fmt.Errorf("no dns answers for host %q via %s", host, c.dnsServer)
-		}
-		dialer := &net.Dialer{Timeout: 3 * time.Second}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(pickPreferredHost(host, ips), port))
-	}
 	return options
-}
-
-func (c *AdminClient) resolveAddr(addr string) string {
-	if c.dnsServer == "" {
-		return addr
-	}
-
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return addr
-	}
-	if parsed := net.ParseIP(host); parsed != nil {
-		return addr
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	ips, err := c.lookupHost(ctx, host)
-	if err != nil || len(ips) == 0 {
-		return addr
-	}
-	return net.JoinHostPort(pickPreferredHost(host, ips), port)
 }
 
 func pickPreferredHost(fallback string, ips []string) string {
@@ -231,15 +174,5 @@ func pickPreferredHost(fallback string, ips []string) string {
 }
 
 func (c *AdminClient) lookupHost(ctx context.Context, host string) ([]string, error) {
-	if c.dnsServer == "" {
-		return net.DefaultResolver.LookupHost(ctx, host)
-	}
-	resolver := &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			dialer := &net.Dialer{Timeout: 3 * time.Second}
-			return dialer.DialContext(ctx, "udp", c.dnsServer)
-		},
-	}
-	return resolver.LookupHost(ctx, host)
+	return net.DefaultResolver.LookupHost(ctx, host)
 }

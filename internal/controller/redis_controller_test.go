@@ -44,8 +44,15 @@ func TestReconcileClusterCreatesShardStatefulSets(t *testing.T) {
 	admin := &trackingAdminClient{}
 	r := newTestReconcilerWithAdmin(admin)
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
-	if _, err := r.Reconcile(testCtx, req); err != nil {
+	firstResult, err := r.Reconcile(testCtx, req)
+	if err != nil {
 		t.Fatalf("first reconcile failed: %v", err)
+	}
+	if firstResult.RequeueAfter != runtimePrerequisitesRequeueAfter {
+		t.Fatalf("unexpected first requeue delay: got %s want %s", firstResult.RequeueAfter, runtimePrerequisitesRequeueAfter)
+	}
+	for i := 0; i < 2; i++ {
+		mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-shard-%d", name, i))
 	}
 	if _, err := r.Reconcile(testCtx, req); err != nil {
 		t.Fatalf("second reconcile failed: %v", err)
@@ -104,9 +111,15 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	admin := &trackingAdminClient{}
 	r := newTestReconcilerWithAdmin(admin)
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
-	if _, err := r.Reconcile(testCtx, req); err != nil {
+	firstResult, err := r.Reconcile(testCtx, req)
+	if err != nil {
 		t.Fatalf("first reconcile failed: %v", err)
 	}
+	if firstResult.RequeueAfter != runtimePrerequisitesRequeueAfter {
+		t.Fatalf("unexpected first requeue delay: got %s want %s", firstResult.RequeueAfter, runtimePrerequisitesRequeueAfter)
+	}
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-redis", name))
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-sentinel", name))
 	if _, err := r.Reconcile(testCtx, req); err != nil {
 		t.Fatalf("second reconcile failed: %v", err)
 	}
@@ -129,8 +142,8 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	if admin.clusterCalls != 0 {
 		t.Fatalf("unexpected cluster bootstrap calls: got %d want 0", admin.clusterCalls)
 	}
-	if admin.failoverCalls != 2 {
-		t.Fatalf("unexpected failover heal calls: got %d want 2", admin.failoverCalls)
+	if admin.failoverCalls != 1 {
+		t.Fatalf("unexpected failover heal calls: got %d want 1", admin.failoverCalls)
 	}
 }
 
@@ -228,5 +241,29 @@ func mustCreateRedis(t *testing.T, obj *redisv1alpha1.Redis) {
 			return
 		}
 		t.Fatalf("create redis failed: %v", err)
+	}
+}
+
+func mustMarkStatefulSetReady(t *testing.T, namespace, name string) {
+	t.Helper()
+	sts := &appsv1.StatefulSet{}
+	key := client.ObjectKey{Namespace: namespace, Name: name}
+	if err := k8sClient.Get(testCtx, key, sts); err != nil {
+		t.Fatalf("get statefulset %s failed: %v", name, err)
+	}
+
+	before := sts.DeepCopy()
+	replicas := int32(1)
+	if sts.Spec.Replicas != nil {
+		replicas = *sts.Spec.Replicas
+	}
+	sts.Status.ObservedGeneration = sts.Generation
+	sts.Status.Replicas = replicas
+	sts.Status.ReadyReplicas = replicas
+	sts.Status.AvailableReplicas = replicas
+	sts.Status.CurrentReplicas = replicas
+
+	if err := k8sClient.Status().Patch(testCtx, sts, client.MergeFrom(before)); err != nil {
+		t.Fatalf("patch statefulset %s status failed: %v", name, err)
 	}
 }

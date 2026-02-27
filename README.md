@@ -18,26 +18,15 @@ Prerequisites:
 - chainsaw
 - ktctl
 
-Optional split DNS setup for `*.cluster.local` on macOS:
+Run with manually managed ktctl:
 
-1. `sudo -v`
-2. `make e2e-local-dns-up E2E_DNS_SOURCE=ktctl-local`
-3. `dig kubernetes.default.svc.cluster.local +short`
+1. `sudo ktctl connect --context kind-redis-operator-e2e --namespace default --dnsMode localDNS:cluster --dnsPort 10053`
+2. `GOPROXY=https://goproxy.cn,direct make e2e-local`
+3. Keep the `ktctl connect` terminal alive during the entire e2e run.
 
-Run with script-managed ktctl:
+If you previously used `e2e-local-dns-up`, remove the stale resolver file before using this flow:
 
-- `GOPROXY=https://goproxy.cn,direct E2E_KTCTL_USE_SUDO=true make e2e-local-run`
-
-Run with externally managed ktctl (recommended on macOS when sudo is interactive):
-
-1. `sudo ktctl connect --context kind-redis-operator-e2e --namespace redis-e2e --dnsMode localDNS`
-2. `make e2e-local-dns-up E2E_DNS_SOURCE=ktctl-local`
-3. `GOPROXY=https://goproxy.cn,direct E2E_KTCTL_EXTERNAL_CONNECT=true make e2e-local-run`
-4. Keep the `ktctl connect` terminal alive during the entire e2e run.
-
-Cleanup split DNS (if configured):
-
-- `make e2e-local-dns-down`
+- `sudo rm -f /etc/resolver/cluster.local`
 
 
 ## How to contribute

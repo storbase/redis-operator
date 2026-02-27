@@ -19,16 +19,11 @@ E2E_NAMESPACE ?= redis-e2e
 E2E_IMG ?= controller:e2e
 E2E_CHAINSAW_DIR ?= test/e2e/chainsaw
 E2E_CHAINSAW_CONFIG ?= $(E2E_CHAINSAW_DIR)/.chainsaw.yaml
+E2E_CHAINSAW_SKIP_DELETE ?= true
 E2E_ARTIFACT_DIR_LOCAL ?= test/e2e/artifacts/local
 E2E_ARTIFACT_DIR_PR ?= test/e2e/artifacts/pr
-E2E_KTCTL_USE_SUDO ?= false
-E2E_KTCTL_EXTERNAL_CONNECT ?= false
-E2E_LOCAL_DNS_SETUP ?= false
 E2E_CLUSTER_DOMAIN ?= cluster.local
-E2E_DNS_SOURCE ?= ktctl-local
-E2E_KTCTL_DNS_PORT ?= 10053
 E2E_DNS_PREFLIGHT ?= true
-E2E_OPERATOR_DNS_SERVER ?=
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -190,52 +185,21 @@ e2e-reset-namespace: ## Recreate the e2e namespace.
 	$(KUBECTL) delete namespace $(E2E_NAMESPACE) --ignore-not-found=true
 	$(KUBECTL) create namespace $(E2E_NAMESPACE)
 
-.PHONY: e2e-ensure-namespace
-e2e-ensure-namespace: ## Ensure the e2e namespace exists without deleting it.
-	@$(KUBECTL) get namespace $(E2E_NAMESPACE) >/dev/null 2>&1 || $(KUBECTL) create namespace $(E2E_NAMESPACE)
-
 .PHONY: e2e-local-up
 e2e-local-up: e2e-kind-up e2e-check-tools-local ## Prepare cluster prerequisites for local ktctl e2e runs.
-	@if [ "$(E2E_LOCAL_DNS_SETUP)" = "true" ]; then \
-		$(MAKE) e2e-local-dns-up; \
-	fi
 	make install
-	@if [ "$(E2E_KTCTL_EXTERNAL_CONNECT)" = "true" ]; then \
-		$(MAKE) e2e-ensure-namespace; \
-	else \
-		$(MAKE) e2e-reset-namespace; \
-	fi
+	$(MAKE) e2e-reset-namespace
 	$(KUBECTL) -n redis-operator-system scale deployment redis-operator-controller-manager --replicas=0 >/dev/null 2>&1 || true
 
-.PHONY: e2e-local-dns-up
-e2e-local-dns-up: e2e-kind-up ## Configure split DNS for cluster domain on local host.
-	E2E_KIND_CLUSTER=$(E2E_KIND_CLUSTER) \
-	E2E_CLUSTER_DOMAIN=$(E2E_CLUSTER_DOMAIN) \
-	E2E_DNS_SOURCE=$(E2E_DNS_SOURCE) \
-	E2E_KTCTL_DNS_PORT=$(E2E_KTCTL_DNS_PORT) \
-	KUBECTL_BIN=$(KUBECTL) \
-	./hack/e2e/local-dns.sh up
-
-.PHONY: e2e-local-dns-down
-e2e-local-dns-down: ## Restore local split DNS file changed by e2e-local-dns-up.
-	E2E_KIND_CLUSTER=$(E2E_KIND_CLUSTER) \
-	E2E_CLUSTER_DOMAIN=$(E2E_CLUSTER_DOMAIN) \
-	E2E_DNS_SOURCE=$(E2E_DNS_SOURCE) \
-	E2E_KTCTL_DNS_PORT=$(E2E_KTCTL_DNS_PORT) \
-	./hack/e2e/local-dns.sh down
-
-.PHONY: e2e-local-run
-e2e-local-run: e2e-local-up ## Run e2e with local controller via ktctl tunnel.
+.PHONY: e2e-local
+e2e-local: e2e-local-up ## Run e2e with local controller via ktctl tunnel.
 	E2E_KIND_CLUSTER=$(E2E_KIND_CLUSTER) \
 	E2E_NAMESPACE=$(E2E_NAMESPACE) \
 	E2E_ARTIFACT_DIR_LOCAL=$(E2E_ARTIFACT_DIR_LOCAL) \
 	E2E_CHAINSAW_DIR=$(E2E_CHAINSAW_DIR) \
 	E2E_CHAINSAW_CONFIG=$(E2E_CHAINSAW_CONFIG) \
-	E2E_KTCTL_USE_SUDO=$(E2E_KTCTL_USE_SUDO) \
-	E2E_KTCTL_EXTERNAL_CONNECT=$(E2E_KTCTL_EXTERNAL_CONNECT) \
+	E2E_CHAINSAW_SKIP_DELETE=$(E2E_CHAINSAW_SKIP_DELETE) \
 	E2E_CLUSTER_DOMAIN=$(E2E_CLUSTER_DOMAIN) \
-	E2E_KTCTL_DNS_PORT=$(E2E_KTCTL_DNS_PORT) \
-	E2E_OPERATOR_DNS_SERVER=$(E2E_OPERATOR_DNS_SERVER) \
 	E2E_DNS_PREFLIGHT=$(E2E_DNS_PREFLIGHT) \
 	./hack/e2e/run-local.sh
 
@@ -244,15 +208,9 @@ e2e-local-dump: ## Collect diagnostics for local e2e runs.
 	./hack/e2e/dump.sh $(E2E_ARTIFACT_DIR_LOCAL) $(E2E_NAMESPACE)
 
 .PHONY: e2e-local-down
-e2e-local-down: ## Stop residual local e2e processes and ktctl resources.
+e2e-local-down: ## Stop residual local e2e controller process.
 	@if [ -f "$(E2E_ARTIFACT_DIR_LOCAL)/controller.pid" ]; then \
 		kill "$$(cat "$(E2E_ARTIFACT_DIR_LOCAL)/controller.pid")" >/dev/null 2>&1 || true; \
-	fi
-	@if [ -f "$(E2E_ARTIFACT_DIR_LOCAL)/ktctl.pid" ]; then \
-		kill "$$(cat "$(E2E_ARTIFACT_DIR_LOCAL)/ktctl.pid")" >/dev/null 2>&1 || true; \
-	fi
-	@if [ "$(E2E_KTCTL_EXTERNAL_CONNECT)" != "true" ]; then \
-		ktctl clean --context "kind-$(E2E_KIND_CLUSTER)" --namespace "$(E2E_NAMESPACE)" --localOnly >/dev/null 2>&1 || true; \
 	fi
 
 .PHONY: e2e
