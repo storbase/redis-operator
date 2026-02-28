@@ -288,6 +288,44 @@ assert_old_master_rejoined_as_replica() {
   done
 }
 
+sentinel_master_field() {
+  local field="$1"
+  local sentinel_pod
+  sentinel_pod="$(sentinel_pod_name 0)"
+  local sentinel_host
+  sentinel_host="$(sentinel_pod_host "$sentinel_pod")"
+  kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${sentinel_tls_flags[@]}" -h "$sentinel_host" -p 26379 "${sentinel_cli_auth[@]}" --raw SENTINEL master "$master_name" 2>/dev/null \
+    | awk -v key="$field" 'previous == key {print; exit} {previous = $0}' \
+    | tr -d '\r' || true
+}
+
+compute_pause_duration_ms() {
+  local down_after
+  down_after="$(sentinel_master_field "down-after-milliseconds")"
+  if ! [[ "$down_after" =~ ^[0-9]+$ ]]; then
+    down_after=30000
+  fi
+  local pause_ms=$((down_after + 15000))
+  if [ "$pause_ms" -lt 45000 ]; then
+    pause_ms=45000
+  fi
+  echo "$pause_ms"
+}
+
+inject_master_pause() {
+  local pod="$1"
+  local pause_ms="$2"
+  local host
+  host="$(redis_pod_host "$pod")"
+  local out
+  out="$(kubectl -n "$namespace" exec "$pod" -- redis-cli "${redis_tls_flags[@]}" -h "$host" -p 6379 "${redis_cli_auth[@]}" --raw CLIENT PAUSE "$pause_ms" ALL 2>/dev/null || true)"
+  out="$(trim_cr "$out")"
+  if [ "$out" != "OK" ]; then
+    echo "failed to inject CLIENT PAUSE on ${pod}: output=${out:-<empty>}"
+    return 1
+  fi
+}
+
 assert_final_topology_roles() {
   local deadline=$((SECONDS + 180))
   while true; do
@@ -328,35 +366,34 @@ wait_for_failover_pods_ready
 assert_sentinel_master_matches_actual "baseline" 180
 
 old_master_pod="$(detect_actual_master_with_retry 180)"
-old_master_uid="$(kubectl -n "$namespace" get pod "$old_master_pod" -o jsonpath='{.metadata.uid}')"
-echo "deleting current master pod: ${old_master_pod} uid=${old_master_uid}"
-kubectl -n "$namespace" delete pod "$old_master_pod" --wait=false >/dev/null
-
-deadline=$((SECONDS + 300))
-while true; do
-  new_uid="$(kubectl -n "$namespace" get pod "$old_master_pod" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
-  if [ -n "$new_uid" ] && [ "$new_uid" != "$old_master_uid" ]; then
-    break
-  fi
-  if [ "$SECONDS" -ge "$deadline" ]; then
-    echo "timeout waiting old master pod to be recreated: pod=${old_master_pod}"
-    exit 1
-  fi
-  sleep 2
-done
-
-kubectl -n "$namespace" wait --for=condition=Ready "pod/${old_master_pod}" --timeout=300s
+pause_duration_ms="$(compute_pause_duration_ms)"
+echo "pausing current master via CLIENT PAUSE: pod=${old_master_pod} duration_ms=${pause_duration_ms}"
+inject_master_pause "$old_master_pod" "$pause_duration_ms"
 
 new_master_pod=""
-deadline=$((SECONDS + 240))
+last_detected_master=""
+deadline=$((SECONDS + 360))
 while true; do
   candidate_master="$(detect_actual_master_once || true)"
+  last_detected_master="$candidate_master"
   if [ -n "$candidate_master" ] && [ "$candidate_master" != "$old_master_pod" ]; then
     new_master_pod="$candidate_master"
     break
   fi
   if [ "$SECONDS" -ge "$deadline" ]; then
-    echo "timeout waiting new master election after deleting ${old_master_pod}"
+    echo "timeout waiting new master election after pausing ${old_master_pod}"
+    echo "last detected actual master: ${last_detected_master:-<none>}"
+    echo "pause duration used: ${pause_duration_ms}ms"
+    collect_sentinel_consensus
+    echo "sentinel consensus: ${sentinel_consensus_pod:-<none>} votes=${sentinel_consensus_votes}/${expected_sentinel} quorum=${quorum}"
+    echo "sentinel diagnostics:"
+    printf '%s\n' "$sentinel_diag"
+    for ordinal in $(seq 0 $((expected_redis - 1))); do
+      pod="$(redis_pod_name "$ordinal")"
+      role="$(query_replication_field "$pod" "role")"
+      link_status="$(query_replication_field "$pod" "master_link_status")"
+      echo "replication snapshot: pod=${pod} role=${role:-<empty>} master_link_status=${link_status:-<empty>}"
+    done
     exit 1
   fi
   sleep 2
