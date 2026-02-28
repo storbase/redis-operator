@@ -6,6 +6,7 @@ namespace="${E2E_NAMESPACE:?E2E_NAMESPACE is required}"
 artifact_dir="${E2E_ARTIFACT_DIR_PR:?E2E_ARTIFACT_DIR_PR is required}"
 chainsaw_dir="${E2E_CHAINSAW_DIR:?E2E_CHAINSAW_DIR is required}"
 chainsaw_config="${E2E_CHAINSAW_CONFIG:?E2E_CHAINSAW_CONFIG is required}"
+chainsaw_suites="${E2E_CHAINSAW_SUITES:-cluster,failover}"
 image="${E2E_IMG:?E2E_IMG is required}"
 kubectl_bin="${KUBECTL_BIN:?KUBECTL_BIN is required}"
 container_tool="${CONTAINER_TOOL_BIN:?CONTAINER_TOOL_BIN is required}"
@@ -15,6 +16,29 @@ operator_namespace="${E2E_OPERATOR_NAMESPACE:-redis-operator-system}"
 operator_deployment="${E2E_OPERATOR_DEPLOYMENT:-redis-operator-controller-manager}"
 
 mkdir -p "$artifact_dir"
+
+IFS=',' read -r -a suites <<<"$chainsaw_suites"
+chainsaw_suite_dirs=()
+for raw_suite in "${suites[@]}"; do
+  suite="${raw_suite//[[:space:]]/}"
+  if [ -z "$suite" ]; then
+    continue
+  fi
+  case "$suite" in
+    cluster|failover)
+      chainsaw_suite_dirs+=(--test-dir "${chainsaw_dir}/${suite}")
+      ;;
+    *)
+      echo "unsupported E2E_CHAINSAW_SUITES entry: $suite" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ "${#chainsaw_suite_dirs[@]}" -eq 0 ]; then
+  echo "E2E_CHAINSAW_SUITES must include at least one suite (cluster, failover)" >&2
+  exit 1
+fi
 
 if [[ "$image" == *:* ]]; then
   image_repository="${image%:*}"
@@ -44,8 +68,7 @@ set +e
 chainsaw test \
   --config "$chainsaw_config" \
   --test-file chainsaw-test.yaml \
-  --test-dir "${chainsaw_dir}/cluster" \
-  --test-dir "${chainsaw_dir}/failover" \
+  "${chainsaw_suite_dirs[@]}" \
   --kube-context "kind-${cluster_name}" \
   --report-format JUNIT-TEST \
   --report-name chainsaw-pr \

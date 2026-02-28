@@ -26,6 +26,7 @@ E2E_OPERATOR_NAMESPACE ?= redis-operator-system
 E2E_OPERATOR_DEPLOYMENT ?= redis-operator-controller-manager
 E2E_CHAINSAW_DIR ?= test/e2e/chainsaw
 E2E_CHAINSAW_CONFIG ?= $(E2E_CHAINSAW_DIR)/.chainsaw.yaml
+E2E_CHAINSAW_SUITES ?= cluster,failover
 E2E_CHAINSAW_SKIP_DELETE ?= true
 E2E_ARTIFACT_DIR_LOCAL ?= test/e2e/artifacts/local
 E2E_ARTIFACT_DIR_PR ?= test/e2e/artifacts/pr
@@ -253,6 +254,7 @@ e2e: e2e-kind-up e2e-check-tools-pr ## Run e2e path with kind + built image + he
 	E2E_ARTIFACT_DIR_PR=$(E2E_ARTIFACT_DIR_PR) \
 	E2E_CHAINSAW_DIR=$(E2E_CHAINSAW_DIR) \
 	E2E_CHAINSAW_CONFIG=$(E2E_CHAINSAW_CONFIG) \
+	E2E_CHAINSAW_SUITES=$(E2E_CHAINSAW_SUITES) \
 	E2E_IMG=$(E2E_IMG) \
 	KUBECTL_BIN=$(KUBECTL) \
 	HELM_BIN=$(HELM) \

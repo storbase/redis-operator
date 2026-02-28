@@ -8,7 +8,9 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
 ## Highlights
 
 - [x] Manage Redis cluster and failover mode in one CRD
-- [x] Hostname based not ip
+- [x] Hostname based not IP
+  - Use stable Kubernetes DNS hostnames (StatefulSet/Service) for Redis node identity.
+  - This avoids broken topology/replication links after Pod restarts or rescheduling when Pod IPs change.
 - [x] TLS with user-provided certificates
 
 ## Install with Helm 4
