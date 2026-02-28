@@ -13,10 +13,17 @@ endif
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
+HELM ?= helm
+CHART_DIR ?= charts/redis-operator
+HELM_PACKAGE_DIR ?= .chart-packages
+HELM_TEMPLATE_KUBE_VERSION ?= 1.35.0
 
 E2E_KIND_CLUSTER ?= redis-operator-e2e
 E2E_NAMESPACE ?= redis-e2e
 E2E_IMG ?= controller:e2e
+E2E_HELM_RELEASE ?= redis-operator
+E2E_OPERATOR_NAMESPACE ?= redis-operator-system
+E2E_OPERATOR_DEPLOYMENT ?= redis-operator-controller-manager
 E2E_CHAINSAW_DIR ?= test/e2e/chainsaw
 E2E_CHAINSAW_CONFIG ?= $(E2E_CHAINSAW_DIR)/.chainsaw.yaml
 E2E_CHAINSAW_SKIP_DELETE ?= true
@@ -87,6 +94,22 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
+
+.PHONY: helm-lint
+helm-lint: ## Run helm lint against the redis-operator chart.
+	$(HELM) lint $(CHART_DIR)
+
+.PHONY: helm-template
+helm-template: ## Render redis-operator chart templates.
+	$(HELM) template redis-operator $(CHART_DIR) --namespace $(E2E_OPERATOR_NAMESPACE) --include-crds --kube-version $(HELM_TEMPLATE_KUBE_VERSION) >/dev/null
+
+.PHONY: helm-test
+helm-test: helm-lint helm-template ## Run helm chart static checks.
+
+.PHONY: helm-package
+helm-package: ## Package redis-operator chart.
+	mkdir -p $(HELM_PACKAGE_DIR)
+	$(HELM) package $(CHART_DIR) --destination $(HELM_PACKAGE_DIR)
 
 ##@ Build
 
@@ -166,6 +189,13 @@ e2e-check-tools: ## Verify required local tools for e2e workflows.
 		fi; \
 	done
 
+.PHONY: e2e-check-tools-pr
+e2e-check-tools-pr: e2e-check-tools ## Verify extra tools required for image-based PR e2e flow.
+	@if ! command -v $(HELM) >/dev/null 2>&1; then \
+		echo "Error: $(HELM) is required for PR e2e flow"; \
+		exit 1; \
+	fi
+
 .PHONY: e2e-check-tools-local
 e2e-check-tools-local: ## Verify extra tools required for local e2e flow.
 	@if ! command -v ktctl >/dev/null 2>&1; then \
@@ -214,14 +244,18 @@ e2e-local-down: ## Stop residual local e2e controller process.
 	fi
 
 .PHONY: e2e
-e2e: e2e-kind-up ## Run e2e path with kind + built image + make deploy.
+e2e: e2e-kind-up e2e-check-tools-pr ## Run e2e path with kind + built image + helm install/upgrade.
 	E2E_KIND_CLUSTER=$(E2E_KIND_CLUSTER) \
 	E2E_NAMESPACE=$(E2E_NAMESPACE) \
+	E2E_HELM_RELEASE=$(E2E_HELM_RELEASE) \
+	E2E_OPERATOR_NAMESPACE=$(E2E_OPERATOR_NAMESPACE) \
+	E2E_OPERATOR_DEPLOYMENT=$(E2E_OPERATOR_DEPLOYMENT) \
 	E2E_ARTIFACT_DIR_PR=$(E2E_ARTIFACT_DIR_PR) \
 	E2E_CHAINSAW_DIR=$(E2E_CHAINSAW_DIR) \
 	E2E_CHAINSAW_CONFIG=$(E2E_CHAINSAW_CONFIG) \
 	E2E_IMG=$(E2E_IMG) \
 	KUBECTL_BIN=$(KUBECTL) \
+	HELM_BIN=$(HELM) \
 	CONTAINER_TOOL_BIN=$(CONTAINER_TOOL) \
 	./hack/e2e/run-pr.sh
 

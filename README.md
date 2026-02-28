@@ -7,7 +7,63 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
 
 ## Highlights
 
-- Manage redis sentinel/cluster mode in one CRD.
+- Manage Redis cluster and failover mode in one CRD.
+- Install and upgrade with Helm 4.
+- Publish Helm charts to GHCR OCI.
+
+## Install with Helm 4
+
+### Install from local chart
+
+```bash
+helm upgrade --install redis-operator ./charts/redis-operator \
+  --namespace redis-operator-system \
+  --create-namespace
+```
+
+The chart defaults to `ghcr.io/storbase/redis-operator:v0.0.0`. Override `image.repository` and `image.tag` when testing custom images.
+
+### Install from OCI chart (GHCR)
+
+```bash
+helm upgrade --install redis-operator oci://ghcr.io/storbase/charts/redis-operator \
+  --version 0.1.0 \
+  --namespace redis-operator-system \
+  --create-namespace
+```
+
+### Upgrade
+
+```bash
+helm upgrade redis-operator ./charts/redis-operator \
+  --namespace redis-operator-system
+```
+
+### Uninstall
+
+```bash
+helm uninstall redis-operator --namespace redis-operator-system
+```
+
+## CRD lifecycle
+
+CRDs are shipped from `charts/redis-operator/crds`, which Helm installs on first install.
+Helm does not upgrade or delete CRDs from this directory.
+
+To upgrade CRDs, apply them manually before chart upgrade:
+
+```bash
+OPERATOR_VERSION=v0.0.0
+kubectl apply -f https://raw.githubusercontent.com/storbase/redis-operator/${OPERATOR_VERSION}/config/crd/bases/redis.storbase.io_redis.yaml
+helm upgrade redis-operator oci://ghcr.io/storbase/charts/redis-operator \
+  --namespace redis-operator-system
+```
+
+## Versioning contract
+
+- Operator release tags: `vX.Y.Z`
+- Chart release tags: `chart-vA.B.C`
+- `charts/redis-operator/Chart.yaml` `appVersion` points to operator version.
 
 ## E2E local debug
 
@@ -24,9 +80,6 @@ Run with manually managed ktctl:
 2. `GOPROXY=https://goproxy.cn,direct make e2e-local`
 3. Keep the `ktctl connect` terminal alive during the entire e2e run.
 
-If you previously used `e2e-local-dns-up`, remove the stale resolver file before using this flow:
-
-- `sudo rm -f /etc/resolver/cluster.local`
-
-
 ## How to contribute
+
+Contributions are welcome.

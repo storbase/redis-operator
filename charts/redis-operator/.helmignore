@@ -1,0 +1,7 @@
+.git/
+.github/
+.idea/
+.cache/
+*.swp
+*.tmp
+.DS_Store

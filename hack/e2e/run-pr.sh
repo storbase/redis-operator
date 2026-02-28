@@ -9,26 +9,33 @@ chainsaw_config="${E2E_CHAINSAW_CONFIG:?E2E_CHAINSAW_CONFIG is required}"
 image="${E2E_IMG:?E2E_IMG is required}"
 kubectl_bin="${KUBECTL_BIN:?KUBECTL_BIN is required}"
 container_tool="${CONTAINER_TOOL_BIN:?CONTAINER_TOOL_BIN is required}"
+helm_bin="${HELM_BIN:-helm}"
+helm_release="${E2E_HELM_RELEASE:-redis-operator}"
+operator_namespace="${E2E_OPERATOR_NAMESPACE:-redis-operator-system}"
+operator_deployment="${E2E_OPERATOR_DEPLOYMENT:-redis-operator-controller-manager}"
 
 mkdir -p "$artifact_dir"
-operator_namespace="redis-operator-system"
-manager_kustomization="config/manager/kustomization.yaml"
-manager_kustomization_backup="$(mktemp)"
-cp "$manager_kustomization" "$manager_kustomization_backup"
 
-cleanup() {
-  cp "$manager_kustomization_backup" "$manager_kustomization"
-  rm -f "$manager_kustomization_backup"
-}
-trap cleanup EXIT
+if [[ "$image" == *:* ]]; then
+  image_repository="${image%:*}"
+  image_tag="${image##*:}"
+else
+  image_repository="$image"
+  image_tag="latest"
+fi
 
 "$container_tool" build -t "$image" .
 kind load docker-image "$image" --name "$cluster_name"
 
-make install
-make deploy IMG="$image"
+"$helm_bin" upgrade --install "$helm_release" charts/redis-operator \
+  --namespace "$operator_namespace" \
+  --create-namespace \
+  --set-string image.repository="$image_repository" \
+  --set-string image.tag="$image_tag" \
+  --wait \
+  --timeout=180s
 
-"$kubectl_bin" -n "$operator_namespace" rollout status deployment/redis-operator-controller-manager --timeout=180s
+"$kubectl_bin" -n "$operator_namespace" rollout status "deployment/${operator_deployment}" --timeout=180s
 
 "$kubectl_bin" delete namespace "$namespace" --ignore-not-found=true
 "$kubectl_bin" create namespace "$namespace"
@@ -47,6 +54,8 @@ rc=$?
 set -e
 
 if [ "$rc" -ne 0 ]; then
+  E2E_OPERATOR_NAMESPACE="$operator_namespace" \
+  E2E_OPERATOR_DEPLOYMENT="$operator_deployment" \
   ./hack/e2e/dump.sh "$artifact_dir" "$namespace"
   kind export logs "${artifact_dir}/kind-logs" --name "$cluster_name" || true
 fi
