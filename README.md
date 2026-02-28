@@ -8,6 +8,7 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
 ## Highlights
 
 - [x] Manage Redis cluster and failover mode in one CRD
+- [x] Hostname based not ip
 - [x] TLS with user-provided certificates
 
 ## Install with Helm 4

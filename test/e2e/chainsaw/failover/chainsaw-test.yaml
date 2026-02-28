@@ -28,3 +28,8 @@ spec:
         content: |
           set -eu
           bash ../../scripts/assert_failover.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
+    - script:
+        timeout: 12m
+        content: |
+          set -eu
+          bash ../../scripts/assert_failover_recovery.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
