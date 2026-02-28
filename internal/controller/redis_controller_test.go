@@ -5,6 +5,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -51,6 +52,8 @@ func TestReconcileClusterCreatesShardStatefulSets(t *testing.T) {
 	if firstResult.RequeueAfter != runtimePrerequisitesRequeueAfter {
 		t.Fatalf("unexpected first requeue delay: got %s want %s", firstResult.RequeueAfter, runtimePrerequisitesRequeueAfter)
 	}
+	firstObserved := mustGetRedis(t, obj)
+	assertHealthStatus(t, firstObserved, false, redisv1alpha1.ReasonReconciling, metav1.ConditionFalse)
 	for i := 0; i < 2; i++ {
 		mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-shard-%d", name, i))
 	}
@@ -81,13 +84,7 @@ func TestReconcileClusterCreatesShardStatefulSets(t *testing.T) {
 	if admin.failoverCalls != 0 {
 		t.Fatalf("unexpected failover heal calls: got %d want 0", admin.failoverCalls)
 	}
-	bootstrap := meta.FindStatusCondition(fetched.Status.Conditions, redisv1alpha1.RedisConditionClusterBootstrapCompleted)
-	if bootstrap == nil || bootstrap.Status != metav1.ConditionTrue {
-		t.Fatalf("expected bootstrap condition to be true, got %#v", bootstrap)
-	}
-	if bootstrap.Reason != redisv1alpha1.RedisReasonClusterBootstrapSucceeded {
-		t.Fatalf("unexpected bootstrap condition reason: got %q", bootstrap.Reason)
-	}
+	assertHealthStatus(t, fetched, true, redisv1alpha1.ReasonHealthy, metav1.ConditionTrue)
 }
 
 func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
@@ -118,6 +115,8 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	if firstResult.RequeueAfter != runtimePrerequisitesRequeueAfter {
 		t.Fatalf("unexpected first requeue delay: got %s want %s", firstResult.RequeueAfter, runtimePrerequisitesRequeueAfter)
 	}
+	firstObserved := mustGetRedis(t, obj)
+	assertHealthStatus(t, firstObserved, false, redisv1alpha1.ReasonReconciling, metav1.ConditionFalse)
 	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-redis", name))
 	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-sentinel", name))
 	if _, err := r.Reconcile(testCtx, req); err != nil {
@@ -145,6 +144,7 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	if admin.failoverCalls != 1 {
 		t.Fatalf("unexpected failover heal calls: got %d want 1", admin.failoverCalls)
 	}
+	assertHealthStatus(t, fetched, true, redisv1alpha1.ReasonHealthy, metav1.ConditionTrue)
 }
 
 func TestReconcileRejectsReservedDirective(t *testing.T) {
@@ -166,6 +166,8 @@ func TestReconcileRejectsReservedDirective(t *testing.T) {
 	if _, err := r.Reconcile(testCtx, req); err == nil {
 		t.Fatalf("expected reserved directive error")
 	}
+	fetched := mustGetRedis(t, obj)
+	assertHealthStatus(t, fetched, false, redisv1alpha1.ReasonInvalidSpec, metav1.ConditionFalse)
 }
 
 func TestReconcileRejectsImmutableChanges(t *testing.T) {
@@ -205,6 +207,134 @@ func TestReconcileRejectsImmutableChanges(t *testing.T) {
 	t.Fatalf("expected immutable update to be rejected by API validation")
 }
 
+func TestReconcileSetsUnhealthyWhenClusterHealFails(t *testing.T) {
+	name := fmt.Sprintf("cluster-heal-fail-%d", time.Now().UnixNano())
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode:  redisv1alpha1.RedisModeCluster,
+			Image: "docker.io/library/redis:8.6.1",
+			Cluster: &redisv1alpha1.ClusterSpec{
+				Shards:           1,
+				ReplicasPerShard: 0,
+			},
+		},
+	}
+	mustCreateRedis(t, obj)
+
+	admin := &trackingAdminClient{clusterErr: errors.New("cluster check failed")}
+	r := newTestReconcilerWithAdmin(admin)
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("first reconcile failed: %v", err)
+	}
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-shard-0", name))
+	if _, err := r.Reconcile(testCtx, req); err == nil {
+		t.Fatalf("expected cluster heal failure")
+	}
+
+	fetched := mustGetRedis(t, obj)
+	assertHealthStatus(t, fetched, false, redisv1alpha1.ReasonClusterCheckFailed, metav1.ConditionFalse)
+	if admin.clusterCalls != 1 {
+		t.Fatalf("unexpected cluster heal calls: got %d want 1", admin.clusterCalls)
+	}
+}
+
+func TestReconcileSetsUnhealthyWhenFailoverHealFails(t *testing.T) {
+	name := fmt.Sprintf("failover-heal-fail-%d", time.Now().UnixNano())
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode:  redisv1alpha1.RedisModeFailover,
+			Image: "docker.io/library/redis:8.6.1",
+			Failover: &redisv1alpha1.FailoverSpec{
+				RedisReplicas:    3,
+				SentinelReplicas: 3,
+				Quorum:           2,
+				MasterName:       "mymaster",
+			},
+		},
+	}
+	mustCreateRedis(t, obj)
+
+	admin := &trackingAdminClient{failoverErr: errors.New("failover check failed")}
+	r := newTestReconcilerWithAdmin(admin)
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("first reconcile failed: %v", err)
+	}
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-redis", name))
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-sentinel", name))
+	if _, err := r.Reconcile(testCtx, req); err == nil {
+		t.Fatalf("expected failover heal failure")
+	}
+
+	fetched := mustGetRedis(t, obj)
+	assertHealthStatus(t, fetched, false, redisv1alpha1.ReasonFailoverCheckFailed, metav1.ConditionFalse)
+	if admin.failoverCalls != 1 {
+		t.Fatalf("unexpected failover heal calls: got %d want 1", admin.failoverCalls)
+	}
+}
+
+func TestReconcileSetsUnhealthyOnBuildFailure(t *testing.T) {
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-fail", Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode:           redisv1alpha1.RedisModeCluster,
+			SentinelConfig: []string{"sentinel down-after-milliseconds mymaster 5000"},
+			Cluster: &redisv1alpha1.ClusterSpec{
+				Shards:           1,
+				ReplicasPerShard: 0,
+			},
+		},
+	}
+	kube := &stubKubernetesClient{redis: obj.DeepCopy()}
+	r := &RedisReconciler{
+		Scheme:     testScheme,
+		Kube:       kube,
+		RedisAdmin: &trackingAdminClient{},
+		Recorder:   events.NewFakeRecorder(100),
+	}
+
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+	if _, err := r.Reconcile(testCtx, req); err == nil {
+		t.Fatalf("expected build failure")
+	}
+	assertHealthStatus(t, kube.redis, false, redisv1alpha1.ReasonBuildFailed, metav1.ConditionFalse)
+}
+
+func TestReconcileSetsUnhealthyOnApplyFailure(t *testing.T) {
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: "apply-fail", Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode:  redisv1alpha1.RedisModeCluster,
+			Image: "docker.io/library/redis:8.6.1",
+			Cluster: &redisv1alpha1.ClusterSpec{
+				Shards:           1,
+				ReplicasPerShard: 0,
+			},
+		},
+	}
+	kube := &stubKubernetesClient{
+		redis:    obj.DeepCopy(),
+		applyErr: errors.New("apply failed"),
+	}
+	r := &RedisReconciler{
+		Scheme:     testScheme,
+		Kube:       kube,
+		RedisAdmin: &trackingAdminClient{},
+		Recorder:   events.NewFakeRecorder(100),
+	}
+
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+	if _, err := r.Reconcile(testCtx, req); err == nil {
+		t.Fatalf("expected apply failure")
+	}
+	assertHealthStatus(t, kube.redis, false, redisv1alpha1.ReasonApplyFailed, metav1.ConditionFalse)
+}
+
 func newTestReconciler() *RedisReconciler {
 	return newTestReconcilerWithAdmin(redisinfra.NewNoopAdminClient())
 }
@@ -222,15 +352,56 @@ func newTestReconcilerWithAdmin(admin appinterfaces.RedisAdminClient) *RedisReco
 type trackingAdminClient struct {
 	clusterCalls  int
 	failoverCalls int
+	clusterErr    error
+	failoverErr   error
 }
 
 func (t *trackingAdminClient) HealCluster(_ context.Context, _, _ string) error {
 	t.clusterCalls++
-	return nil
+	return t.clusterErr
 }
 
 func (t *trackingAdminClient) HealFailover(_ context.Context, _, _ string) error {
 	t.failoverCalls++
+	return t.failoverErr
+}
+
+type stubKubernetesClient struct {
+	redis          *redisv1alpha1.Redis
+	applyErr       error
+	patchStatusErr error
+}
+
+func (s *stubKubernetesClient) Get(_ context.Context, _ client.ObjectKey, obj client.Object) error {
+	redisObj, ok := obj.(*redisv1alpha1.Redis)
+	if !ok {
+		return fmt.Errorf("unsupported object type %T", obj)
+	}
+	if s.redis == nil {
+		return errors.New("redis object is not configured")
+	}
+	s.redis.DeepCopyInto(redisObj)
+	return nil
+}
+
+func (s *stubKubernetesClient) Apply(_ context.Context, _ client.Object) error {
+	return s.applyErr
+}
+
+func (s *stubKubernetesClient) Patch(_ context.Context, _ client.Object, _ client.Patch) error {
+	return nil
+}
+
+func (s *stubKubernetesClient) PatchStatus(_ context.Context, obj client.Object, _ client.Patch) error {
+	if s.patchStatusErr != nil {
+		return s.patchStatusErr
+	}
+	redisObj, ok := obj.(*redisv1alpha1.Redis)
+	if !ok {
+		return fmt.Errorf("unsupported object type %T", obj)
+	}
+	s.redis.Status = redisObj.Status
+	s.redis.Generation = redisObj.Generation
 	return nil
 }
 
@@ -265,5 +436,40 @@ func mustMarkStatefulSetReady(t *testing.T, namespace, name string) {
 
 	if err := k8sClient.Status().Patch(testCtx, sts, client.MergeFrom(before)); err != nil {
 		t.Fatalf("patch statefulset %s status failed: %v", name, err)
+	}
+}
+
+func mustGetRedis(t *testing.T, obj *redisv1alpha1.Redis) *redisv1alpha1.Redis {
+	t.Helper()
+	fetched := &redisv1alpha1.Redis{}
+	if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(obj), fetched); err != nil {
+		t.Fatalf("get redis failed: %v", err)
+	}
+	return fetched
+}
+
+func assertHealthStatus(
+	t *testing.T,
+	redis *redisv1alpha1.Redis,
+	wantHealth bool,
+	wantReason redisv1alpha1.RedisHealthReason,
+	wantConditionStatus metav1.ConditionStatus,
+) {
+	t.Helper()
+	if redis.Status.Health != wantHealth {
+		t.Fatalf("unexpected health: got %v want %v", redis.Status.Health, wantHealth)
+	}
+	if redis.Status.Reason != wantReason {
+		t.Fatalf("unexpected reason: got %q want %q", redis.Status.Reason, wantReason)
+	}
+	condition := meta.FindStatusCondition(redis.Status.Conditions, redisv1alpha1.RedisConditionHealth)
+	if condition == nil {
+		t.Fatalf("missing health condition")
+	}
+	if condition.Status != wantConditionStatus {
+		t.Fatalf("unexpected health condition status: got %q want %q", condition.Status, wantConditionStatus)
+	}
+	if condition.Reason != string(wantReason) {
+		t.Fatalf("unexpected health condition reason: got %q want %q", condition.Reason, wantReason)
 	}
 }

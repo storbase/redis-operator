@@ -32,10 +32,21 @@ const (
 )
 
 const (
-	// RedisConditionClusterBootstrapCompleted indicates cluster bootstrap finished successfully.
-	RedisConditionClusterBootstrapCompleted = "ClusterBootstrapCompleted"
-	// RedisReasonClusterBootstrapSucceeded is emitted when bootstrap succeeds.
-	RedisReasonClusterBootstrapSucceeded = "BootstrapSucceeded"
+	// RedisConditionHealth reports whether the Redis resource is healthy.
+	RedisConditionHealth = "Health"
+)
+
+// RedisHealthReason is the machine-readable reason for the current health status.
+type RedisHealthReason string
+
+const (
+	ReasonReconciling         RedisHealthReason = "Reconciling"
+	ReasonInvalidSpec         RedisHealthReason = "InvalidSpec"
+	ReasonBuildFailed         RedisHealthReason = "BuildFailed"
+	ReasonApplyFailed         RedisHealthReason = "ApplyFailed"
+	ReasonClusterCheckFailed  RedisHealthReason = "ClusterCheckFailed"
+	ReasonFailoverCheckFailed RedisHealthReason = "FailoverCheckFailed"
+	ReasonHealthy             RedisHealthReason = "Healthy"
 )
 
 // AuthSpec configures references to password secrets.
@@ -159,7 +170,9 @@ type RedisSpec struct {
 
 // RedisStatus defines the observed state of Redis.
 type RedisStatus struct {
-	Endpoint string `json:"endpoint,omitempty"`
+	Endpoint string            `json:"endpoint,omitempty"`
+	Health   bool              `json:"health,omitempty"`
+	Reason   RedisHealthReason `json:"reason,omitempty"`
 
 	// Conditions contains the latest observations of this resource's runtime state.
 	// +optional
@@ -173,7 +186,8 @@ type RedisStatus struct {
 // +kubebuilder:resource:path=redis,scope=Namespaced,shortName=rds
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
 // +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.status.endpoint`
-// +kubebuilder:printcolumn:name="Bootstrap",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterBootstrapCompleted")].status`
+// +kubebuilder:printcolumn:name="Health",type=boolean,JSONPath=`.status.health`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
 // +kubebuilder:validation:XValidation:rule="(self.spec.mode == 'Cluster' && has(self.spec.cluster) && !has(self.spec.failover)) || (self.spec.mode == 'Failover' && has(self.spec.failover) && !has(self.spec.cluster))",message="mode and sub-spec must match exactly one"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.sentinelConfig) || size(self.spec.sentinelConfig) == 0",message="sentinelConfig is only allowed in Failover mode"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.failover) || self.spec.failover.quorum <= self.spec.failover.sentinelReplicas",message="failover.quorum must be <= failover.sentinelReplicas"

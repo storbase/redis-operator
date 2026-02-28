@@ -5,6 +5,8 @@ metadata:
   namespace: redis-e2e
 status:
   endpoint: redis-failover-sentinel.redis-e2e.svc:26379
+  health: true
+  reason: Healthy
 ---
 apiVersion: apps/v1
 kind: StatefulSet

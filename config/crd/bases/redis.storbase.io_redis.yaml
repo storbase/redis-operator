@@ -23,8 +23,11 @@ spec:
     - jsonPath: .status.endpoint
       name: Endpoint
       type: string
-    - jsonPath: .status.conditions[?(@.type=="ClusterBootstrapCompleted")].status
-      name: Bootstrap
+    - jsonPath: .status.health
+      name: Health
+      type: boolean
+    - jsonPath: .status.reason
+      name: Reason
       type: string
     name: v1alpha1
     schema:
@@ -3975,6 +3978,12 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               endpoint:
+                type: string
+              health:
+                type: boolean
+              reason:
+                description: RedisHealthReason is the machine-readable reason for
+                  the current health status.
                 type: string
             type: object
         type: object
