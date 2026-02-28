@@ -1,3 +1,13 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-failover-auth
+  namespace: redis-e2e
+type: Opaque
+stringData:
+  redis-password: failover-redis-pass-123
+  sentinel-password: failover-sentinel-pass-123
+---
 apiVersion: redis.storbase.io/v1alpha1
 kind: Redis
 metadata:
@@ -7,6 +17,13 @@ spec:
   mode: Failover
   image: docker.io/library/redis:8.6.1
   imagePullPolicy: IfNotPresent
+  auth:
+    redisPasswordSecretRef:
+      name: redis-failover-auth
+      key: redis-password
+    sentinelPasswordSecretRef:
+      name: redis-failover-auth
+      key: sentinel-password
   failover:
     redisReplicas: 3
     sentinelReplicas: 3

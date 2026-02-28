@@ -4,6 +4,18 @@ set -euo pipefail
 namespace="${1:-redis-e2e}"
 name="${2:-redis-failover}"
 master_name="${3:-mymaster}"
+redis_password="${4:-}"
+sentinel_password="${5:-}"
+
+redis_cli_auth=()
+if [ -n "$redis_password" ]; then
+  redis_cli_auth=(-a "$redis_password")
+fi
+
+sentinel_cli_auth=()
+if [ -n "$sentinel_password" ]; then
+  sentinel_cli_auth=(-a "$sentinel_password")
+fi
 
 redis_labels="app.kubernetes.io/instance=${name},app.kubernetes.io/component=redis"
 sentinel_labels="app.kubernetes.io/instance=${name},app.kubernetes.io/component=sentinel"
@@ -32,10 +44,10 @@ master_host=""
 master_port=""
 deadline=$((SECONDS + 300))
 while true; do
-  ckquorum_output="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 SENTINEL CKQUORUM "$master_name" 2>/dev/null || true)"
+  ckquorum_output="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 "${sentinel_cli_auth[@]}" SENTINEL CKQUORUM "$master_name" 2>/dev/null || true)"
   if printf '%s\n' "$ckquorum_output" | grep -Eiq '(^OK|usable Sentinels)'; then
-    master_host="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 --raw SENTINEL get-master-addr-by-name "$master_name" | sed -n '1p' | tr -d '\r')"
-    master_port="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 --raw SENTINEL get-master-addr-by-name "$master_name" | sed -n '2p' | tr -d '\r')"
+    master_host="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 "${sentinel_cli_auth[@]}" --raw SENTINEL get-master-addr-by-name "$master_name" | sed -n '1p' | tr -d '\r')"
+    master_port="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 "${sentinel_cli_auth[@]}" --raw SENTINEL get-master-addr-by-name "$master_name" | sed -n '2p' | tr -d '\r')"
     if [ -n "$master_host" ] && [ -n "$master_port" ]; then
       break
     fi
@@ -51,7 +63,7 @@ done
 master_pod=""
 for ordinal in $(seq 0 $((expected_redis - 1))); do
   candidate="${name}-redis-${ordinal}"
-  candidate_role="$(kubectl -n "$namespace" exec "$candidate" -- redis-cli --raw INFO replication | sed -n 's/^role://p' | tr -d '\r' | head -n1 || true)"
+  candidate_role="$(kubectl -n "$namespace" exec "$candidate" -- redis-cli "${redis_cli_auth[@]}" --raw INFO replication | sed -n 's/^role://p' | tr -d '\r' | head -n1 || true)"
   if [ "$candidate_role" = "master" ]; then
     master_pod="$candidate"
     break
@@ -62,14 +74,13 @@ if [ -z "$master_pod" ]; then
   exit 1
 fi
 
-connect_host="$(kubectl -n "$namespace" get pod "$master_pod" -o jsonpath='{.status.podIP}')"
-role_info="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$connect_host" -p "$master_port" INFO replication)"
+role_info="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" INFO replication)"
 
 printf '%s\n' "$role_info" | grep -q "role:master"
 
 key="${name}:steady:e2e"
-kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$connect_host" -p "$master_port" SET "$key" "ok" >/dev/null
-value="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$connect_host" -p "$master_port" GET "$key" | tr -d '\r')"
+kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" SET "$key" "ok" >/dev/null
+value="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" GET "$key" | tr -d '\r')"
 if [ "$value" != "ok" ]; then
   echo "unexpected value: $value"
   exit 1

@@ -3,6 +3,12 @@ set -euo pipefail
 
 namespace="${1:-redis-e2e}"
 name="${2:-redis-cluster}"
+redis_password="${3:-}"
+
+redis_cli_auth=()
+if [ -n "$redis_password" ]; then
+  redis_cli_auth=(-a "$redis_password")
+fi
 
 labels="app.kubernetes.io/instance=${name},app.kubernetes.io/component=redis"
 shards="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.spec.cluster.shards}')"
@@ -27,7 +33,7 @@ kubectl -n "$namespace" wait --for=condition=Ready pod -l "$labels" --timeout=60
 cluster_info=""
 deadline=$((SECONDS + 300))
 while true; do
-  if cluster_info="$(kubectl -n "$namespace" exec "${name}-shard-0-0" -- redis-cli CLUSTER INFO 2>/dev/null)"; then
+  if cluster_info="$(kubectl -n "$namespace" exec "${name}-shard-0-0" -- redis-cli "${redis_cli_auth[@]}" CLUSTER INFO 2>/dev/null)"; then
     cluster_state="$(printf '%s\n' "$cluster_info" | awk -F: '/^cluster_state:/{print $2}' | tr -d '\r')"
     cluster_slots_assigned="$(printf '%s\n' "$cluster_info" | awk -F: '/^cluster_slots_assigned:/{print $2}' | tr -d '\r')"
     if [ "$cluster_state" = "ok" ] && [ "$cluster_slots_assigned" = "16384" ]; then
@@ -54,7 +60,7 @@ if [ "$cluster_size" -ne 3 ]; then
   exit 1
 fi
 
-nodes="$(kubectl -n "$namespace" exec "${name}-shard-0-0" -- redis-cli CLUSTER NODES)"
+nodes="$(kubectl -n "$namespace" exec "${name}-shard-0-0" -- redis-cli "${redis_cli_auth[@]}" CLUSTER NODES)"
 master_count="$(printf '%s\n' "$nodes" | awk '$3 ~ /master/ {count++} END {print count+0}')"
 replica_count="$(printf '%s\n' "$nodes" | awk '$3 ~ /slave|replica/ {count++} END {print count+0}')"
 if [ "$master_count" -ne 3 ]; then
