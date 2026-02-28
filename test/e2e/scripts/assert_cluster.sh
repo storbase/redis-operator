@@ -10,10 +10,18 @@ if [ -n "$redis_password" ]; then
   redis_cli_auth=(-a "$redis_password")
 fi
 
+redis_tls_flags=()
+tls_secret="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.spec.tls.secretName}' 2>/dev/null || true)"
+if [ -n "$tls_secret" ]; then
+  redis_tls_flags=(--tls --cacert /etc/redis-tls/ca.crt)
+fi
+
 labels="app.kubernetes.io/instance=${name},app.kubernetes.io/component=redis"
 shards="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.spec.cluster.shards}')"
 replicas_per_shard="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.spec.cluster.replicasPerShard}')"
 expected_pods=$((shards * (replicas_per_shard + 1)))
+seed_pod="${name}-shard-0-0"
+seed_host="${seed_pod}.${name}-shard-0.${namespace}.svc.cluster.local"
 
 deadline=$((SECONDS + 600))
 while true; do
@@ -33,7 +41,7 @@ kubectl -n "$namespace" wait --for=condition=Ready pod -l "$labels" --timeout=60
 cluster_info=""
 deadline=$((SECONDS + 300))
 while true; do
-  if cluster_info="$(kubectl -n "$namespace" exec "${name}-shard-0-0" -- redis-cli "${redis_cli_auth[@]}" CLUSTER INFO 2>/dev/null)"; then
+  if cluster_info="$(kubectl -n "$namespace" exec "$seed_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$seed_host" -p 6379 "${redis_cli_auth[@]}" CLUSTER INFO 2>/dev/null)"; then
     cluster_state="$(printf '%s\n' "$cluster_info" | awk -F: '/^cluster_state:/{print $2}' | tr -d '\r')"
     cluster_slots_assigned="$(printf '%s\n' "$cluster_info" | awk -F: '/^cluster_slots_assigned:/{print $2}' | tr -d '\r')"
     if [ "$cluster_state" = "ok" ] && [ "$cluster_slots_assigned" = "16384" ]; then
@@ -60,7 +68,7 @@ if [ "$cluster_size" -ne 3 ]; then
   exit 1
 fi
 
-nodes="$(kubectl -n "$namespace" exec "${name}-shard-0-0" -- redis-cli "${redis_cli_auth[@]}" CLUSTER NODES)"
+nodes="$(kubectl -n "$namespace" exec "$seed_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$seed_host" -p 6379 "${redis_cli_auth[@]}" CLUSTER NODES)"
 master_count="$(printf '%s\n' "$nodes" | awk '$3 ~ /master/ {count++} END {print count+0}')"
 replica_count="$(printf '%s\n' "$nodes" | awk '$3 ~ /slave|replica/ {count++} END {print count+0}')"
 if [ "$master_count" -ne 3 ]; then

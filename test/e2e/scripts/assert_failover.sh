@@ -17,6 +17,14 @@ if [ -n "$sentinel_password" ]; then
   sentinel_cli_auth=(-a "$sentinel_password")
 fi
 
+redis_tls_flags=()
+sentinel_tls_flags=()
+tls_secret="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.spec.tls.secretName}' 2>/dev/null || true)"
+if [ -n "$tls_secret" ]; then
+  redis_tls_flags=(--tls --cacert /etc/redis-tls/ca.crt)
+  sentinel_tls_flags=(--tls --cacert /etc/redis-tls/ca.crt)
+fi
+
 redis_labels="app.kubernetes.io/instance=${name},app.kubernetes.io/component=redis"
 sentinel_labels="app.kubernetes.io/instance=${name},app.kubernetes.io/component=sentinel"
 expected_redis="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.spec.failover.redisReplicas}')"
@@ -40,17 +48,18 @@ kubectl -n "$namespace" wait --for=condition=Ready pod -l "$redis_labels" --time
 kubectl -n "$namespace" wait --for=condition=Ready pod -l "$sentinel_labels" --timeout=600s
 
 sentinel_pod="${name}-sentinel-0"
+sentinel_host="${sentinel_pod}.${name}-sentinel.${namespace}.svc.cluster.local"
 master_host=""
 master_port=""
 deadline=$((SECONDS + 300))
 while true; do
-  ckquorum_output="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 "${sentinel_cli_auth[@]}" SENTINEL CKQUORUM "$master_name" 2>/dev/null || true)"
+  ckquorum_output="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${sentinel_tls_flags[@]}" -h "$sentinel_host" -p 26379 "${sentinel_cli_auth[@]}" SENTINEL CKQUORUM "$master_name" 2>/dev/null || true)"
   if printf '%s\n' "$ckquorum_output" | grep -Eq '^OK'; then
-    master_endpoint="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -p 26379 "${sentinel_cli_auth[@]}" --raw SENTINEL get-master-addr-by-name "$master_name" 2>/dev/null || true)"
+    master_endpoint="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${sentinel_tls_flags[@]}" -h "$sentinel_host" -p 26379 "${sentinel_cli_auth[@]}" --raw SENTINEL get-master-addr-by-name "$master_name" 2>/dev/null || true)"
     master_host="$(printf '%s\n' "$master_endpoint" | sed -n '1p' | tr -d '\r')"
     master_port="$(printf '%s\n' "$master_endpoint" | sed -n '2p' | tr -d '\r')"
     if [ -n "$master_host" ] && [ -n "$master_port" ]; then
-      if kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" PING >/dev/null 2>&1; then
+      if kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" PING >/dev/null 2>&1; then
         break
       fi
     fi
@@ -68,7 +77,8 @@ deadline=$((SECONDS + 180))
 while true; do
   for ordinal in $(seq 0 $((expected_redis - 1))); do
     candidate="${name}-redis-${ordinal}"
-    candidate_role="$(kubectl -n "$namespace" exec "$candidate" -- redis-cli "${redis_cli_auth[@]}" --raw INFO replication 2>/dev/null | sed -n 's/^role://p' | tr -d '\r' | head -n1 || true)"
+    candidate_host="${candidate}.${name}-redis-headless.${namespace}.svc.cluster.local"
+    candidate_role="$(kubectl -n "$namespace" exec "$candidate" -- redis-cli "${redis_tls_flags[@]}" -h "$candidate_host" -p 6379 "${redis_cli_auth[@]}" --raw INFO replication 2>/dev/null | sed -n 's/^role://p' | tr -d '\r' | head -n1 || true)"
     if [ "$candidate_role" = "master" ]; then
       master_pod="$candidate"
       break
@@ -87,7 +97,7 @@ done
 role_info=""
 deadline=$((SECONDS + 180))
 while true; do
-  if role_info="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" INFO replication 2>/dev/null || true)"; then
+  if role_info="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" INFO replication 2>/dev/null || true)"; then
     if printf '%s\n' "$role_info" | grep -q "role:master"; then
       break
     fi
@@ -101,8 +111,8 @@ while true; do
 done
 
 key="${name}:steady:e2e"
-kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" SET "$key" "ok" >/dev/null
-value="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" GET "$key" | tr -d '\r')"
+kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" SET "$key" "ok" >/dev/null
+value="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" GET "$key" | tr -d '\r')"
 if [ "$value" != "ok" ]; then
   echo "unexpected value: $value"
   exit 1

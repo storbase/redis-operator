@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"strings"
@@ -9,7 +10,7 @@ import (
 	redisv1alpha1 "github.com/storbase/redis-operator/api/v1alpha1"
 )
 
-func (c *AdminClient) healFailover(ctx context.Context, redisObj *redisv1alpha1.Redis, redisPassword, sentinelPassword string) error {
+func (c *AdminClient) healFailover(ctx context.Context, redisObj *redisv1alpha1.Redis, redisPassword, sentinelPassword string, tlsConfig *tls.Config) error {
 	masterName := redisObj.Spec.Failover.MasterName
 	if masterName == "" {
 		masterName = defaultMasterName
@@ -22,12 +23,12 @@ func (c *AdminClient) healFailover(ctx context.Context, redisObj *redisv1alpha1.
 
 	var lastErr error
 	for _, addr := range sentinelAddrs {
-		masterAddr, err := c.checkSentinelHealth(ctx, addr, masterName, sentinelPassword)
+		masterAddr, err := c.checkSentinelHealth(ctx, addr, masterName, sentinelPassword, tlsConfig)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if err := c.checkMasterHealth(ctx, masterAddr, redisPassword); err != nil {
+		if err := c.checkMasterHealth(ctx, masterAddr, redisPassword, tlsConfig); err != nil {
 			lastErr = err
 			continue
 		}
@@ -64,8 +65,8 @@ func buildSentinelAddresses(namespace, name string, replicas int32) []string {
 	return addrs
 }
 
-func (c *AdminClient) checkSentinelHealth(ctx context.Context, sentinelAddr, masterName, sentinelPassword string) (string, error) {
-	sentinel := c.newSentinelClient(sentinelAddr, sentinelPassword)
+func (c *AdminClient) checkSentinelHealth(ctx context.Context, sentinelAddr, masterName, sentinelPassword string, tlsConfig *tls.Config) (string, error) {
+	sentinel := c.newSentinelClient(sentinelAddr, sentinelPassword, tlsConfig)
 	defer func() {
 		_ = sentinel.Close()
 	}()
@@ -89,8 +90,8 @@ func (c *AdminClient) checkSentinelHealth(ctx context.Context, sentinelAddr, mas
 	return net.JoinHostPort(masterEndpoint[0], masterEndpoint[1]), nil
 }
 
-func (c *AdminClient) checkMasterHealth(ctx context.Context, masterAddr, redisPassword string) error {
-	cli := c.newRedisClient(masterAddr, redisPassword)
+func (c *AdminClient) checkMasterHealth(ctx context.Context, masterAddr, redisPassword string, tlsConfig *tls.Config) error {
+	cli := c.newRedisClient(masterAddr, redisPassword, tlsConfig)
 	defer func() {
 		_ = cli.Close()
 	}()

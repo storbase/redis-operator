@@ -1,6 +1,24 @@
 package redis
 
-import "testing"
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"testing"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	redisv1alpha1 "github.com/storbase/redis-operator/api/v1alpha1"
+)
 
 func TestBuildSlotRanges(t *testing.T) {
 	ranges := buildSlotRanges(3)
@@ -101,6 +119,107 @@ func TestPickMeetHost(t *testing.T) {
 	if got := pickMeetHost(host, []string{"fe80::1"}); got != "fe80::1" {
 		t.Fatalf("expected first address fallback, got %q", got)
 	}
+}
+
+func TestReadTLSConfigReturnsNilWhenTLSDisabled(t *testing.T) {
+	admin := &AdminClient{}
+	cfg, err := admin.readTLSConfig(context.Background(), "default", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg != nil {
+		t.Fatalf("expected nil tls config when tls is disabled")
+	}
+}
+
+func TestReadTLSConfigLoadsCA(t *testing.T) {
+	caPEM := mustBuildTestCAPEM(t)
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme failed: %v", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      "redis-tls",
+		},
+		Data: map[string][]byte{
+			"ca.crt": caPEM,
+		},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+	admin := &AdminClient{kube: kubeClient}
+
+	cfg, err := admin.readTLSConfig(context.Background(), "default", &redisv1alpha1.TLSSpec{SecretName: "redis-tls"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatalf("expected non-nil tls config")
+	}
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("unexpected tls min version: %d", cfg.MinVersion)
+	}
+	if cfg.RootCAs == nil {
+		t.Fatalf("expected tls root CAs to be configured")
+	}
+}
+
+func TestReadTLSConfigRejectsMissingCA(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme failed: %v", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      "redis-tls",
+		},
+		Data: map[string][]byte{},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+	admin := &AdminClient{kube: kubeClient}
+
+	_, err := admin.readTLSConfig(context.Background(), "default", &redisv1alpha1.TLSSpec{SecretName: "redis-tls"})
+	if err == nil {
+		t.Fatalf("expected error for missing ca.crt")
+	}
+}
+
+func mustBuildTestCAPEM(t *testing.T) []byte {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate private key failed: %v", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	if err != nil {
+		t.Fatalf("generate serial failed: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: "redis-test-ca",
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+
+	raw, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("create certificate failed: %v", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw})
 }
 
 type assertionErr string

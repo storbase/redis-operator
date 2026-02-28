@@ -20,6 +20,7 @@ type RedisStatefulSetOptions struct {
 	Storage       redisv1alpha1.StorageSpec
 	Command       string
 	ConfigMapName string
+	TLSSecretName string
 }
 
 // SentinelStatefulSetOptions contains parameters used to create sentinel StatefulSets.
@@ -36,6 +37,7 @@ type SentinelStatefulSetOptions struct {
 	SentinelPasswordRef *corev1.SecretKeySelector
 	Image               string
 	ImagePullPolicy     corev1.PullPolicy
+	TLSSecretName       string
 }
 
 // NewRedisStatefulSet builds a redis StatefulSet for either cluster or failover mode.
@@ -45,7 +47,7 @@ func NewRedisStatefulSet(redis *redisv1alpha1.Redis, opts RedisStatefulSetOption
 		replicas = 1
 	}
 
-	redisContainer := newRedisContainer(redis, opts.Command, opts.ServiceName)
+	redisContainer := newRedisContainer(redis, opts.Command, opts.ServiceName, opts.TLSSecretName)
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      opts.Name,
@@ -73,8 +75,16 @@ func NewRedisStatefulSet(redis *redisv1alpha1.Redis, opts RedisStatefulSetOption
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{newDataPVC(opts.Storage)},
 		},
 	}
+	if opts.TLSSecretName != "" {
+		sts.Spec.Template.Spec.Volumes = append(sts.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: "tls",
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: opts.TLSSecretName,
+			}},
+		})
+	}
 	if redis.Spec.Exporter.Enabled {
-		sts.Spec.Template.Spec.Containers = append(sts.Spec.Template.Spec.Containers, newExporterContainer(redis))
+		sts.Spec.Template.Spec.Containers = append(sts.Spec.Template.Spec.Containers, newExporterContainer(redis, opts.ServiceName, opts.TLSSecretName))
 	}
 	applyPodPolicy(&sts.Spec.Template.Spec, &sts.Spec.Template.Spec.Containers[0], opts.Policy)
 	return sts
@@ -111,6 +121,13 @@ exec redis-server /tmp/sentinel.conf --sentinel`},
 			MountPath: "/etc/redis-template",
 			ReadOnly:  true,
 		}},
+	}
+	if opts.TLSSecretName != "" {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name:      "tls",
+			MountPath: "/etc/redis-tls",
+			ReadOnly:  true,
+		})
 	}
 	if opts.RedisPasswordRef != nil {
 		container.Env = append(container.Env, corev1.EnvVar{
@@ -149,11 +166,19 @@ exec redis-server /tmp/sentinel.conf --sentinel`},
 			},
 		},
 	}
+	if opts.TLSSecretName != "" {
+		sts.Spec.Template.Spec.Volumes = append(sts.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: "tls",
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: opts.TLSSecretName,
+			}},
+		})
+	}
 	applyPodPolicy(&sts.Spec.Template.Spec, &sts.Spec.Template.Spec.Containers[0], opts.Policy)
 	return sts
 }
 
-func newRedisContainer(redis *redisv1alpha1.Redis, command, serviceName string) corev1.Container {
+func newRedisContainer(redis *redisv1alpha1.Redis, command, serviceName, tlsSecretName string) corev1.Container {
 	container := corev1.Container{
 		Name:            "redis",
 		Image:           imageOrDefault(redis.Spec.Image, DefaultRedisImage),
@@ -174,6 +199,13 @@ func newRedisContainer(redis *redisv1alpha1.Redis, command, serviceName string) 
 			{Name: "data", MountPath: "/data"},
 		},
 	}
+	if tlsSecretName != "" {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name:      "tls",
+			MountPath: "/etc/redis-tls",
+			ReadOnly:  true,
+		})
+	}
 	if redis.Spec.Auth.RedisPasswordSecretRef != nil {
 		container.Env = append(container.Env, corev1.EnvVar{
 			Name:      "REDIS_PASSWORD",
@@ -183,12 +215,19 @@ func newRedisContainer(redis *redisv1alpha1.Redis, command, serviceName string) 
 	return container
 }
 
-func newExporterContainer(redis *redisv1alpha1.Redis) corev1.Container {
+func newExporterContainer(redis *redisv1alpha1.Redis, serviceName, tlsSecretName string) corev1.Container {
+	args := []string{"--redis.addr=redis://127.0.0.1:6379"}
+	if tlsSecretName != "" {
+		args = []string{
+			"--redis.addr=rediss://$(POD_NAME).$(HEADLESS_SERVICE).$(POD_NAMESPACE).svc.cluster.local:6379",
+			"--tls-ca-cert-file=/etc/redis-tls/ca.crt",
+		}
+	}
 	container := corev1.Container{
 		Name:            "redis-exporter",
 		Image:           imageOrDefault(redis.Spec.Exporter.Image, DefaultExporterImage),
 		ImagePullPolicy: pullPolicyOrDefault(redis.Spec.ImagePullPolicy),
-		Args:            []string{"--redis.addr=redis://127.0.0.1:6379"},
+		Args:            args,
 		Ports: []corev1.ContainerPort{{
 			Name:          "metrics",
 			ContainerPort: 9121,
@@ -199,6 +238,18 @@ func newExporterContainer(redis *redisv1alpha1.Redis) corev1.Container {
 		container.Env = append(container.Env, corev1.EnvVar{
 			Name:      "REDIS_PASSWORD",
 			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: redis.Spec.Auth.RedisPasswordSecretRef},
+		})
+	}
+	if tlsSecretName != "" {
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+			corev1.EnvVar{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
+			corev1.EnvVar{Name: "HEADLESS_SERVICE", Value: serviceName},
+		)
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name:      "tls",
+			MountPath: "/etc/redis-tls",
+			ReadOnly:  true,
 		})
 	}
 	return container

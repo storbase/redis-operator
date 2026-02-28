@@ -6,6 +6,11 @@ spec:
   mode: Cluster
   image: docker.io/library/redis:8.6.1
   imagePullPolicy: IfNotPresent
+  # Optional TLS:
+  # 1. Create a Secret in the same namespace with keys: tls.crt, tls.key, ca.crt.
+  # 2. Reference that Secret here.
+  # tls:
+  #   secretName: redis-tls
   redisConfig:
   - save 900 1
   - save 300 10

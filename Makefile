@@ -182,7 +182,7 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 
 .PHONY: e2e-check-tools
 e2e-check-tools: ## Verify required local tools for e2e workflows.
-	@for bin in $(KUBECTL) $(KIND) $(CHAINSAW) $(CONTAINER_TOOL); do \
+	@for bin in $(KUBECTL) $(KIND) $(CHAINSAW) $(CONTAINER_TOOL) openssl; do \
 		if ! command -v $$bin >/dev/null 2>&1; then \
 			echo "Error: $$bin is required but not found in PATH"; \
 			exit 1; \

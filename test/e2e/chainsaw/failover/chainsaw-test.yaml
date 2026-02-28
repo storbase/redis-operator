@@ -6,6 +6,18 @@ spec:
   steps:
   - name: apply-and-verify-failover-steady-state
     try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-failover-tls \
+            redis-failover.redis-e2e.svc.cluster.local \
+            '*.redis-failover-redis-headless.redis-e2e.svc.cluster.local' \
+            '*.redis-failover-sentinel.redis-e2e.svc.cluster.local' \
+            'redis-failover-redis.redis-e2e.svc.cluster.local' \
+            'redis-failover-sentinel.redis-e2e.svc.cluster.local'
     - apply:
         file: redis.yaml
     - assert:

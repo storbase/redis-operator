@@ -10,6 +10,10 @@ import (
 
 // ValidateSemantic performs controller-side semantic validation.
 func ValidateSemantic(redis *redisv1alpha1.Redis) error {
+	if redis.Spec.TLS != nil && strings.TrimSpace(redis.Spec.TLS.SecretName) == "" {
+		return fmt.Errorf("spec.tls.secretName must be set when spec.tls is configured")
+	}
+
 	userRedisConfig, err := cfg.ValidateUserDirectives(redis.Spec.RedisConfig, cfg.IsReservedRedisDirective)
 	if err != nil {
 		return fmt.Errorf("invalid redisConfig: %w", err)

@@ -87,13 +87,15 @@ func IsReservedRedisDirective(tokens []string) bool {
 	if strings.HasPrefix(key, "cluster-announce-") {
 		return true
 	}
+	if strings.HasPrefix(key, "tls-") {
+		return true
+	}
 	reserved := map[string]struct{}{
 		"cluster-enabled":                 {},
 		"cluster-config-file":             {},
 		"cluster-preferred-endpoint-type": {},
 		"replicaof":                       {},
 		"port":                            {},
-		"tls-port":                        {},
 		"dir":                             {},
 	}
 	_, ok := reserved[key]
@@ -106,7 +108,7 @@ func IsReservedSentinelDirective(tokens []string) bool {
 		return false
 	}
 	key := strings.ToLower(tokens[0])
-	if key == "port" || key == "tls-port" {
+	if key == "port" || strings.HasPrefix(key, "tls-") {
 		return true
 	}
 	if key != "sentinel" || len(tokens) < 2 {

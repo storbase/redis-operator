@@ -17,6 +17,8 @@ spec:
   mode: Failover
   image: docker.io/library/redis:8.6.1
   imagePullPolicy: IfNotPresent
+  tls:
+    secretName: redis-failover-tls
   auth:
     redisPasswordSecretRef:
       name: redis-failover-auth

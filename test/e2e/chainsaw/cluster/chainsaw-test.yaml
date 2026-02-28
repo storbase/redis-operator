@@ -6,6 +6,20 @@ spec:
   steps:
   - name: apply-and-verify-cluster
     try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-cluster-tls \
+            redis-cluster.redis-e2e.svc.cluster.local \
+            '*.redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-2.redis-e2e.svc.cluster.local'
     - apply:
         file: redis.yaml
     - assert:

@@ -3910,6 +3910,17 @@ spec:
                   type: string
                 maxItems: 256
                 type: array
+              tls:
+                description: TLSSpec configures TLS with user-provided certificates.
+                properties:
+                  secretName:
+                    description: SecretName references a Secret in the same namespace
+                      containing tls.crt, tls.key, and ca.crt.
+                    minLength: 1
+                    type: string
+                required:
+                - secretName
+                type: object
             required:
             - mode
             type: object

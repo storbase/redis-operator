@@ -2,6 +2,8 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"strconv"
@@ -22,6 +24,7 @@ const (
 	totalClusterSlots = 16384
 	defaultMasterName = "mymaster"
 	clusterDomain     = "cluster.local"
+	tlsCAKey          = "ca.crt"
 )
 
 // AdminClient executes short runtime checks and bootstrap actions for Redis.
@@ -51,7 +54,11 @@ func (c *AdminClient) HealCluster(ctx context.Context, namespace, name string) e
 	if err != nil {
 		return err
 	}
-	return c.healCluster(ctx, obj, password)
+	tlsConfig, err := c.readTLSConfig(ctx, namespace, obj.Spec.TLS)
+	if err != nil {
+		return err
+	}
+	return c.healCluster(ctx, obj, password, tlsConfig)
 }
 
 func (c *AdminClient) HealFailover(ctx context.Context, namespace, name string) error {
@@ -71,7 +78,11 @@ func (c *AdminClient) HealFailover(ctx context.Context, namespace, name string) 
 	if err != nil {
 		return err
 	}
-	return c.healFailover(ctx, obj, redisPassword, sentinelPassword)
+	tlsConfig, err := c.readTLSConfig(ctx, namespace, obj.Spec.TLS)
+	if err != nil {
+		return err
+	}
+	return c.healFailover(ctx, obj, redisPassword, sentinelPassword, tlsConfig)
 }
 
 func (c *AdminClient) loadRedis(ctx context.Context, namespace, name string) (*redisv1alpha1.Redis, error) {
@@ -99,6 +110,33 @@ func (c *AdminClient) readSecretValue(ctx context.Context, namespace string, ref
 		return "", fmt.Errorf("secret %s/%s key %q not found", namespace, ref.Name, ref.Key)
 	}
 	return string(value), nil
+}
+
+func (c *AdminClient) readTLSConfig(ctx context.Context, namespace string, spec *redisv1alpha1.TLSSpec) (*tls.Config, error) {
+	if spec == nil {
+		return nil, nil
+	}
+	if spec.SecretName == "" {
+		return nil, fmt.Errorf("invalid tls spec: secretName must be set")
+	}
+
+	secret := &corev1.Secret{}
+	if err := c.kube.Get(ctx, client.ObjectKey{Namespace: namespace, Name: spec.SecretName}, secret); err != nil {
+		return nil, fmt.Errorf("read tls secret %s/%s failed: %w", namespace, spec.SecretName, err)
+	}
+	ca, ok := secret.Data[tlsCAKey]
+	if !ok {
+		return nil, fmt.Errorf("tls secret %s/%s key %q not found", namespace, spec.SecretName, tlsCAKey)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("parse ca cert from tls secret %s/%s failed", namespace, spec.SecretName)
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    pool,
+	}, nil
 }
 
 func (c *AdminClient) commandContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -141,21 +179,22 @@ func splitAddress(addr string) (string, string, error) {
 	return host, port, nil
 }
 
-func (c *AdminClient) newRedisClient(addr, password string) *redis.Client {
-	return redis.NewClient(c.newRedisOptions(addr, password))
+func (c *AdminClient) newRedisClient(addr, password string, tlsConfig *tls.Config) *redis.Client {
+	return redis.NewClient(c.newRedisOptions(addr, password, tlsConfig))
 }
 
-func (c *AdminClient) newSentinelClient(addr, password string) *redis.SentinelClient {
-	return redis.NewSentinelClient(c.newRedisOptions(addr, password))
+func (c *AdminClient) newSentinelClient(addr, password string, tlsConfig *tls.Config) *redis.SentinelClient {
+	return redis.NewSentinelClient(c.newRedisOptions(addr, password, tlsConfig))
 }
 
-func (c *AdminClient) newRedisOptions(addr, password string) *redis.Options {
+func (c *AdminClient) newRedisOptions(addr, password string, tlsConfig *tls.Config) *redis.Options {
 	options := &redis.Options{
 		Addr:         addr,
 		Password:     password,
 		DialTimeout:  3 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
+		TLSConfig:    tlsConfig,
 	}
 	return options
 }

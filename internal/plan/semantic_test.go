@@ -36,3 +36,12 @@ func TestValidateSemanticRejectsInlineSentinelCredential(t *testing.T) {
 		t.Fatalf("expected error for inline sentinel credentials")
 	}
 }
+
+func TestValidateSemanticRejectsEmptyTLSSecretName(t *testing.T) {
+	obj := &redisv1alpha1.Redis{Spec: redisv1alpha1.RedisSpec{
+		TLS: &redisv1alpha1.TLSSpec{},
+	}}
+	if err := ValidateSemantic(obj); err == nil {
+		t.Fatalf("expected error for empty tls secret name")
+	}
+}

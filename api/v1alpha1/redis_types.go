@@ -55,6 +55,13 @@ type AuthSpec struct {
 	SentinelPasswordSecretRef *corev1.SecretKeySelector `json:"sentinelPasswordSecretRef,omitempty"`
 }
 
+// TLSSpec configures TLS with user-provided certificates.
+type TLSSpec struct {
+	// SecretName references a Secret in the same namespace containing tls.crt, tls.key, and ca.crt.
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName"`
+}
+
 // StorageSpec configures data volume claims.
 type StorageSpec struct {
 	// Size is the requested PVC size.
@@ -149,6 +156,8 @@ type RedisSpec struct {
 	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 
 	Auth AuthSpec `json:"auth,omitempty"`
+
+	TLS *TLSSpec `json:"tls,omitempty"`
 
 	// RedisConfig accepts one Redis directive per line.
 	// +kubebuilder:validation:MaxItems=512

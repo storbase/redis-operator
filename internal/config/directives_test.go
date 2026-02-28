@@ -22,6 +22,13 @@ func TestValidateUserDirectivesRejectReserved(t *testing.T) {
 	}
 }
 
+func TestValidateUserDirectivesRejectReservedTLSDirective(t *testing.T) {
+	_, err := ValidateUserDirectives([]string{"tls-port 6379"}, IsReservedRedisDirective)
+	if err == nil {
+		t.Fatalf("expected reserved tls directive error")
+	}
+}
+
 func TestValidateUserDirectivesAllowsMultiToken(t *testing.T) {
 	lines, err := ValidateUserDirectives([]string{"client-output-buffer-limit normal 0 0 0"}, IsReservedRedisDirective)
 	if err != nil {
@@ -29,5 +36,12 @@ func TestValidateUserDirectivesAllowsMultiToken(t *testing.T) {
 	}
 	if len(lines) != 1 {
 		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+}
+
+func TestValidateUserSentinelDirectivesRejectReservedTLSDirective(t *testing.T) {
+	_, err := ValidateUserDirectives([]string{"tls-auth-clients no"}, IsReservedSentinelDirective)
+	if err == nil {
+		t.Fatalf("expected reserved sentinel tls directive error")
 	}
 }

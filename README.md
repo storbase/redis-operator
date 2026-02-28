@@ -7,9 +7,8 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
 
 ## Highlights
 
-- Manage Redis cluster and failover mode in one CRD.
-- Install and upgrade with Helm 4.
-- Publish Helm charts to GHCR OCI.
+- [x] Manage Redis cluster and failover mode in one CRD
+- [x] TLS with user-provided certificates
 
 ## Install with Helm 4
 
@@ -73,6 +72,7 @@ Prerequisites:
 - kubectl
 - chainsaw
 - ktctl
+- openssl
 
 Run with manually managed ktctl:
 

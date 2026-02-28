@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ type clusterTopology struct {
 	ExpectedShards  int
 }
 
-func (c *AdminClient) healCluster(ctx context.Context, redisObj *redisv1alpha1.Redis, password string) error {
+func (c *AdminClient) healCluster(ctx context.Context, redisObj *redisv1alpha1.Redis, password string, tlsConfig *tls.Config) error {
 	topology, err := buildClusterTopology(
 		redisObj.Namespace,
 		redisObj.Name,
@@ -33,7 +34,7 @@ func (c *AdminClient) healCluster(ctx context.Context, redisObj *redisv1alpha1.R
 		return err
 	}
 
-	ready, err := c.isClusterHealthy(ctx, topology.Masters, password, topology.ExpectedNodes, topology.ExpectedShards)
+	ready, err := c.isClusterHealthy(ctx, topology.Masters, password, tlsConfig, topology.ExpectedNodes, topology.ExpectedShards)
 	if err != nil {
 		return err
 	}
@@ -41,20 +42,20 @@ func (c *AdminClient) healCluster(ctx context.Context, redisObj *redisv1alpha1.R
 		return nil
 	}
 
-	if err := c.ensureClusterNodesReachable(ctx, topology.All, password); err != nil {
+	if err := c.ensureClusterNodesReachable(ctx, topology.All, password, tlsConfig); err != nil {
 		return err
 	}
-	if err := c.bootstrapMeet(ctx, topology.Masters[0], topology.All[1:], password); err != nil {
+	if err := c.bootstrapMeet(ctx, topology.Masters[0], topology.All[1:], password, tlsConfig); err != nil {
 		return err
 	}
-	if err := c.bootstrapSlots(ctx, topology.Masters, password); err != nil {
+	if err := c.bootstrapSlots(ctx, topology.Masters, password, tlsConfig); err != nil {
 		return err
 	}
-	if err := c.bootstrapReplicas(ctx, topology.Masters, topology.ReplicaToMaster, password); err != nil {
+	if err := c.bootstrapReplicas(ctx, topology.Masters, topology.ReplicaToMaster, password, tlsConfig); err != nil {
 		return err
 	}
 
-	ready, err = c.isClusterHealthy(ctx, topology.Masters, password, topology.ExpectedNodes, topology.ExpectedShards)
+	ready, err = c.isClusterHealthy(ctx, topology.Masters, password, tlsConfig, topology.ExpectedNodes, topology.ExpectedShards)
 	if err != nil {
 		return err
 	}
@@ -134,9 +135,9 @@ func buildSlotRanges(shards int) []slotRange {
 	return ranges
 }
 
-func (c *AdminClient) ensureClusterNodesReachable(ctx context.Context, addrs []string, password string) error {
+func (c *AdminClient) ensureClusterNodesReachable(ctx context.Context, addrs []string, password string, tlsConfig *tls.Config) error {
 	for _, addr := range addrs {
-		cli := c.newRedisClient(addr, password)
+		cli := c.newRedisClient(addr, password, tlsConfig)
 		commandCtx, cancel := c.commandContext(ctx)
 		err := cli.Ping(commandCtx).Err()
 		cancel()
@@ -148,10 +149,10 @@ func (c *AdminClient) ensureClusterNodesReachable(ctx context.Context, addrs []s
 	return nil
 }
 
-func (c *AdminClient) isClusterHealthy(ctx context.Context, probes []string, password string, expectedNodes, expectedShards int) (bool, error) {
+func (c *AdminClient) isClusterHealthy(ctx context.Context, probes []string, password string, tlsConfig *tls.Config, expectedNodes, expectedShards int) (bool, error) {
 	var lastErr error
 	for _, addr := range probes {
-		cli := c.newRedisClient(addr, password)
+		cli := c.newRedisClient(addr, password, tlsConfig)
 		commandCtx, cancel := c.commandContext(ctx)
 		raw, err := cli.ClusterInfo(commandCtx).Result()
 		cancel()
@@ -190,8 +191,8 @@ func (c *AdminClient) isClusterHealthy(ctx context.Context, probes []string, pas
 	return false, nil
 }
 
-func (c *AdminClient) bootstrapMeet(ctx context.Context, coordinator string, peers []string, password string) error {
-	cli := c.newRedisClient(coordinator, password)
+func (c *AdminClient) bootstrapMeet(ctx context.Context, coordinator string, peers []string, password string, tlsConfig *tls.Config) error {
+	cli := c.newRedisClient(coordinator, password, tlsConfig)
 	defer func() {
 		_ = cli.Close()
 	}()
@@ -228,10 +229,10 @@ func pickMeetHost(host string, ips []string) string {
 	return pickPreferredHost(host, ips)
 }
 
-func (c *AdminClient) bootstrapSlots(ctx context.Context, masters []string, password string) error {
+func (c *AdminClient) bootstrapSlots(ctx context.Context, masters []string, password string, tlsConfig *tls.Config) error {
 	slotRanges := buildSlotRanges(len(masters))
 	for index, masterAddr := range masters {
-		cli := c.newRedisClient(masterAddr, password)
+		cli := c.newRedisClient(masterAddr, password, tlsConfig)
 		commandCtx, cancel := c.commandContext(ctx)
 		err := cli.Do(commandCtx, "CLUSTER", "ADDSLOTSRANGE", slotRanges[index].Start, slotRanges[index].End).Err()
 		cancel()
@@ -249,10 +250,10 @@ func (c *AdminClient) bootstrapSlots(ctx context.Context, masters []string, pass
 	return nil
 }
 
-func (c *AdminClient) bootstrapReplicas(ctx context.Context, masters []string, replicaToMaster map[string]string, password string) error {
+func (c *AdminClient) bootstrapReplicas(ctx context.Context, masters []string, replicaToMaster map[string]string, password string, tlsConfig *tls.Config) error {
 	masterIDs := make(map[string]string, len(masters))
 	for _, masterAddr := range masters {
-		cli := c.newRedisClient(masterAddr, password)
+		cli := c.newRedisClient(masterAddr, password, tlsConfig)
 		commandCtx, cancel := c.commandContext(ctx)
 		id, err := cli.Do(commandCtx, "CLUSTER", "MYID").Text()
 		cancel()
@@ -268,7 +269,7 @@ func (c *AdminClient) bootstrapReplicas(ctx context.Context, masters []string, r
 		if !ok {
 			return fmt.Errorf("master id missing for %s", masterAddr)
 		}
-		cli := c.newRedisClient(replicaAddr, password)
+		cli := c.newRedisClient(replicaAddr, password, tlsConfig)
 		commandCtx, cancel := c.commandContext(ctx)
 		err := cli.Do(commandCtx, "CLUSTER", "REPLICATE", masterID).Err()
 		cancel()
