@@ -7,23 +7,15 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
 
 ## Highlights
 
-- [x] Manage Redis cluster and failover mode in one CRD
-- [x] Hostname based not IP
+- [x] Based on the [official Redis Docker image](https://hub.docker.com/_/redis)
+- [x] Supports both Redis Cluster and Failover modes in a single CRD
+- [x] Uses hostnames instead of Pod IP addresses
   - Use stable Kubernetes DNS hostnames (StatefulSet/Service) for Redis node identity.
   - This avoids broken topology/replication links after Pod restarts or rescheduling when Pod IPs change.
-- [x] TLS with user-provided certificates
+- [x] Supports TLS with user-provided certificates
+- [ ] Supports scale in/out
 
 ## Install with Helm 4
-
-### Install from local chart
-
-```bash
-helm upgrade --install redis-operator ./charts/redis-operator \
-  --namespace redis-operator-system \
-  --create-namespace
-```
-
-The chart defaults to `ghcr.io/storbase/redis-operator:v0.0.0`. Override `image.repository` and `image.tag` when testing custom images.
 
 ### Install from OCI chart (GHCR)
 
@@ -80,7 +72,7 @@ Prerequisites:
 Run with manually managed ktctl:
 
 1. `sudo ktctl connect --context kind-redis-operator-e2e --namespace default --dnsMode localDNS:cluster --dnsPort 10053`
-2. `GOPROXY=https://goproxy.cn,direct make e2e-local`
+2. `make e2e-local`
 3. Keep the `ktctl connect` terminal alive during the entire e2e run.
 
 ## How to contribute
