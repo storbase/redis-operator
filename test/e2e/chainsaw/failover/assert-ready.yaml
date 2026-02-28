@@ -1,0 +1,23 @@
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-failover
+  namespace: redis-e2e
+status:
+  endpoint: redis-failover-sentinel.redis-e2e.svc:26379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-failover-redis
+  namespace: redis-e2e
+status:
+  readyReplicas: 3
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-failover-sentinel
+  namespace: redis-e2e
+status:
+  readyReplicas: 3

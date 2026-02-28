@@ -140,6 +140,6 @@ func buildFailoverDesiredState(redis *redisv1alpha1.Redis) (DesiredState, error)
 	})
 
 	objects := []client.Object{redisCM, sentinelCM, redisHeadless, redisService, redisSTS, sentinelService, sentinelSTS}
-	endpoint := fmt.Sprintf("%s.%s.svc:6379", redisServiceName, redis.Namespace)
+	endpoint := fmt.Sprintf("%s.%s.svc:26379", sentinelServiceName, redis.Namespace)
 	return DesiredState{Objects: objects, Endpoint: endpoint}, nil
 }

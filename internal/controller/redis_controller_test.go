@@ -135,7 +135,7 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(obj), fetched); err != nil {
 		t.Fatalf("get redis failed: %v", err)
 	}
-	wantEndpoint := fmt.Sprintf("%s-redis.default.svc:6379", name)
+	wantEndpoint := fmt.Sprintf("%s-sentinel.default.svc:26379", name)
 	if fetched.Status.Endpoint != wantEndpoint {
 		t.Fatalf("unexpected endpoint: got %q want %q", fetched.Status.Endpoint, wantEndpoint)
 	}

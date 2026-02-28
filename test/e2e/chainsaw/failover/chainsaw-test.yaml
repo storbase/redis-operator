@@ -8,6 +8,9 @@ spec:
     try:
     - apply:
         file: redis.yaml
+    - assert:
+        timeout: 10m
+        file: assert-ready.yaml
     - script:
         timeout: 10m
         content: |
