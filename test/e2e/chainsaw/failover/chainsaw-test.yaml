@@ -65,9 +65,9 @@ spec:
         content: |
           set -eu
           kubectl -n redis-e2e patch redis redis-failover --type=merge -p '{"spec":{"failover":{"redisReplicas":3}}}'
-          delete_deadline=$((SECONDS + 300))
+          delete_deadline=$(( $(date +%s) + 300 ))
           while kubectl -n redis-e2e get pod redis-failover-redis-3 >/dev/null 2>&1; do
-            if [ "$SECONDS" -ge "$delete_deadline" ]; then
+            if [ "$(date +%s)" -ge "$delete_deadline" ]; then
               echo "timeout waiting redis-failover-redis-3 to be deleted"
               exit 1
             fi
