@@ -82,6 +82,60 @@ func TestBuildSentinelAddresses(t *testing.T) {
 	}
 }
 
+func TestBuildFailoverRedisAddresses(t *testing.T) {
+	addrs := buildFailoverRedisAddresses("redis-e2e", "sample", 4)
+	if len(addrs) != 4 {
+		t.Fatalf("expected 4 addresses, got %d", len(addrs))
+	}
+
+	want := "sample-redis-0.sample-redis-headless.redis-e2e.svc.cluster.local:6379"
+	if addrs[0] != want {
+		t.Fatalf("unexpected first redis address, got %q want %q", addrs[0], want)
+	}
+}
+
+func TestNormalizeFailoverMasterAddress(t *testing.T) {
+	redisAddrs := buildFailoverRedisAddresses("redis-e2e", "sample", 3)
+
+	got, err := normalizeFailoverMasterAddress("sample-redis-2:6379", redisAddrs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "sample-redis-2.sample-redis-headless.redis-e2e.svc.cluster.local:6379"
+	if got != want {
+		t.Fatalf("unexpected normalized master address, got %q want %q", got, want)
+	}
+}
+
+func TestNormalizeFailoverMasterAddressRejectsIP(t *testing.T) {
+	redisAddrs := buildFailoverRedisAddresses("redis-e2e", "sample", 3)
+
+	if _, err := normalizeFailoverMasterAddress("10.0.0.9:6379", redisAddrs); err == nil {
+		t.Fatalf("expected ip-like master host to be rejected")
+	}
+}
+
+func TestReplicaTracksMaster(t *testing.T) {
+	redisAddrs := buildFailoverRedisAddresses("redis-e2e", "sample", 3)
+	aliases := buildFailoverHostAliases(redisAddrs)
+	masterHost := "sample-redis-0.sample-redis-headless.redis-e2e.svc.cluster.local"
+
+	fields := map[string]string{
+		"role":               "slave",
+		"master_host":        "sample-redis-0",
+		"master_port":        "6379",
+		"master_link_status": "up",
+	}
+	if !replicaTracksMaster(fields, aliases, masterHost, "6379") {
+		t.Fatalf("expected replica fields to match master")
+	}
+
+	fields["master_host"] = "10.0.0.10"
+	if replicaTracksMaster(fields, aliases, masterHost, "6379") {
+		t.Fatalf("expected ip-based master host to be rejected")
+	}
+}
+
 func TestParseInfoFields(t *testing.T) {
 	raw := "# Header\ncluster_state:ok\ncluster_slots_assigned:16384\n"
 	fields := parseInfoFields(raw)

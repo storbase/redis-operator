@@ -1,0 +1,10 @@
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-failover
+  namespace: redis-e2e
+status:
+  health: true
+  reason: Healthy
+  observedRedisReadyReplicas: 4
+  observedSentinelReadyReplicas: 3

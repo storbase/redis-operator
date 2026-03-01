@@ -54,6 +54,7 @@ func TestReconcileClusterCreatesShardStatefulSets(t *testing.T) {
 	}
 	firstObserved := mustGetRedis(t, obj)
 	assertHealthStatus(t, firstObserved, false, redisv1alpha1.ReasonReconciling, metav1.ConditionFalse)
+	assertObservedReadyCounts(t, firstObserved, 0, 0)
 	for i := 0; i < 2; i++ {
 		mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-shard-%d", name, i))
 	}
@@ -85,6 +86,7 @@ func TestReconcileClusterCreatesShardStatefulSets(t *testing.T) {
 		t.Fatalf("unexpected failover heal calls: got %d want 0", admin.failoverCalls)
 	}
 	assertHealthStatus(t, fetched, true, redisv1alpha1.ReasonHealthy, metav1.ConditionTrue)
+	assertObservedReadyCounts(t, fetched, 4, 0)
 }
 
 func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
@@ -117,6 +119,7 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	}
 	firstObserved := mustGetRedis(t, obj)
 	assertHealthStatus(t, firstObserved, false, redisv1alpha1.ReasonReconciling, metav1.ConditionFalse)
+	assertObservedReadyCounts(t, firstObserved, 0, 0)
 	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-redis", name))
 	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-sentinel", name))
 	if _, err := r.Reconcile(testCtx, req); err != nil {
@@ -145,6 +148,7 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 		t.Fatalf("unexpected failover heal calls: got %d want 1", admin.failoverCalls)
 	}
 	assertHealthStatus(t, fetched, true, redisv1alpha1.ReasonHealthy, metav1.ConditionTrue)
+	assertObservedReadyCounts(t, fetched, 3, 3)
 }
 
 func TestReconcileRejectsReservedDirective(t *testing.T) {
@@ -471,5 +475,15 @@ func assertHealthStatus(
 	}
 	if condition.Reason != string(wantReason) {
 		t.Fatalf("unexpected health condition reason: got %q want %q", condition.Reason, wantReason)
+	}
+}
+
+func assertObservedReadyCounts(t *testing.T, redis *redisv1alpha1.Redis, wantRedis, wantSentinel int32) {
+	t.Helper()
+	if redis.Status.ObservedRedisReadyReplicas != wantRedis {
+		t.Fatalf("unexpected observed redis ready replicas: got %d want %d", redis.Status.ObservedRedisReadyReplicas, wantRedis)
+	}
+	if redis.Status.ObservedSentinelReadyReplicas != wantSentinel {
+		t.Fatalf("unexpected observed sentinel ready replicas: got %d want %d", redis.Status.ObservedSentinelReadyReplicas, wantSentinel)
 	}
 }

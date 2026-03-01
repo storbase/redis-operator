@@ -183,6 +183,12 @@ type RedisStatus struct {
 	Health   bool              `json:"health,omitempty"`
 	Reason   RedisHealthReason `json:"reason,omitempty"`
 
+	// ObservedRedisReadyReplicas is the current number of ready redis pods observed from StatefulSet status.
+	ObservedRedisReadyReplicas int32 `json:"observedRedisReadyReplicas,omitempty"`
+
+	// ObservedSentinelReadyReplicas is the current number of ready sentinel pods observed from StatefulSet status.
+	ObservedSentinelReadyReplicas int32 `json:"observedSentinelReadyReplicas,omitempty"`
+
 	// Conditions contains the latest observations of this resource's runtime state.
 	// +optional
 	// +listType=map

@@ -52,6 +52,14 @@ type RedisReconciler struct {
 	Recorder   events.EventRecorder
 }
 
+type statefulSetStatusSnapshot struct {
+	Exists             bool
+	Generation         int64
+	ObservedGeneration int64
+	DesiredReplicas    int32
+	ReadyReplicas      int32
+}
+
 // +kubebuilder:rbac:groups=redis.storbase.io,resources=redis,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=redis.storbase.io,resources=redis/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=redis.storbase.io,resources=redis/finalizers,verbs=update
@@ -117,6 +125,13 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	if redis.Status.Endpoint != desired.Endpoint {
 		redis.Status.Endpoint = desired.Endpoint
+	}
+	if err := r.setObservedReadyReplicaCounts(ctx, redis); err != nil {
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, err.Error())
+		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
+			return ctrl.Result{}, patchErr
+		}
+		return ctrl.Result{}, err
 	}
 
 	runtimeReady, waitReason, err := r.runtimePrerequisitesReady(ctx, redis)
@@ -199,22 +214,76 @@ func (r *RedisReconciler) runtimePrerequisitesReady(ctx context.Context, redis *
 }
 
 func (r *RedisReconciler) statefulSetReady(ctx context.Context, namespace, name string) (bool, error) {
+	snapshot, err := r.readStatefulSetStatus(ctx, namespace, name)
+	if err != nil {
+		return false, err
+	}
+	if !snapshot.Exists {
+		return false, nil
+	}
+	if snapshot.ObservedGeneration < snapshot.Generation {
+		return false, nil
+	}
+	return snapshot.ReadyReplicas >= snapshot.DesiredReplicas, nil
+}
+
+func (r *RedisReconciler) readStatefulSetStatus(ctx context.Context, namespace, name string) (statefulSetStatusSnapshot, error) {
 	sts := &appsv1.StatefulSet{}
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, sts); err != nil {
 		if errors.IsNotFound(err) {
-			return false, nil
+			return statefulSetStatusSnapshot{}, nil
 		}
-		return false, err
+		return statefulSetStatusSnapshot{}, err
 	}
 
 	replicas := int32(1)
 	if sts.Spec.Replicas != nil {
 		replicas = *sts.Spec.Replicas
 	}
-	if sts.Status.ObservedGeneration < sts.Generation {
-		return false, nil
+	return statefulSetStatusSnapshot{
+		Exists:             true,
+		Generation:         sts.Generation,
+		ObservedGeneration: sts.Status.ObservedGeneration,
+		DesiredReplicas:    replicas,
+		ReadyReplicas:      sts.Status.ReadyReplicas,
+	}, nil
+}
+
+func (r *RedisReconciler) setObservedReadyReplicaCounts(ctx context.Context, redis *redisv1alpha1.Redis) error {
+	redisReady := int32(0)
+	sentinelReady := int32(0)
+
+	switch redis.Spec.Mode {
+	case redisv1alpha1.RedisModeCluster:
+		if redis.Spec.Cluster == nil {
+			redis.Status.ObservedRedisReadyReplicas = 0
+			redis.Status.ObservedSentinelReadyReplicas = 0
+			return nil
+		}
+		for shard := int32(0); shard < redis.Spec.Cluster.Shards; shard++ {
+			stsName := fmt.Sprintf("%s-shard-%d", redis.Name, shard)
+			snapshot, err := r.readStatefulSetStatus(ctx, redis.Namespace, stsName)
+			if err != nil {
+				return err
+			}
+			redisReady += snapshot.ReadyReplicas
+		}
+	case redisv1alpha1.RedisModeFailover:
+		redisSnapshot, err := r.readStatefulSetStatus(ctx, redis.Namespace, fmt.Sprintf("%s-redis", redis.Name))
+		if err != nil {
+			return err
+		}
+		sentinelSnapshot, err := r.readStatefulSetStatus(ctx, redis.Namespace, fmt.Sprintf("%s-sentinel", redis.Name))
+		if err != nil {
+			return err
+		}
+		redisReady = redisSnapshot.ReadyReplicas
+		sentinelReady = sentinelSnapshot.ReadyReplicas
 	}
-	return sts.Status.ReadyReplicas >= replicas, nil
+
+	redis.Status.ObservedRedisReadyReplicas = redisReady
+	redis.Status.ObservedSentinelReadyReplicas = sentinelReady
+	return nil
 }
 
 func (r *RedisReconciler) patchStatusIfChanged(ctx context.Context, before, after *redisv1alpha1.Redis) error {

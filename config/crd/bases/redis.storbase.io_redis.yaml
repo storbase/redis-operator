@@ -3992,6 +3992,16 @@ spec:
                 type: string
               health:
                 type: boolean
+              observedRedisReadyReplicas:
+                description: ObservedRedisReadyReplicas is the current number of ready
+                  redis pods observed from StatefulSet status.
+                format: int32
+                type: integer
+              observedSentinelReadyReplicas:
+                description: ObservedSentinelReadyReplicas is the current number of
+                  ready sentinel pods observed from StatefulSet status.
+                format: int32
+                type: integer
               reason:
                 description: RedisHealthReason is the machine-readable reason for
                   the current health status.
