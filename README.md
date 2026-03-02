@@ -75,6 +75,8 @@ Run with manually managed ktctl:
 2. `make e2e-local`
 3. Keep the `ktctl connect` terminal alive during the entire e2e run.
 
+E2E suites include data durability assertions via `test/e2e/scripts/assert_data.sh` using in-cluster `redis-cli`.
+
 ## How to contribute
 
 Contributions are welcome.

@@ -249,12 +249,4 @@ fi
 
 assert_replica_topology "$master_pod" "$(trim_cr "$master_port")"
 
-key="${name}:steady:e2e"
-kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" SET "$key" "ok" >/dev/null
-value="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$master_host" -p "$master_port" "${redis_cli_auth[@]}" GET "$key" | tr -d '\r')"
-if [ "$value" != "ok" ]; then
-  echo "unexpected value: $value"
-  exit 1
-fi
-
 echo "failover steady-state assertions passed"
