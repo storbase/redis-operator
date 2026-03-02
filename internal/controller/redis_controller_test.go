@@ -174,8 +174,45 @@ func TestReconcileRejectsReservedDirective(t *testing.T) {
 	assertHealthStatus(t, fetched, false, redisv1alpha1.ReasonInvalidSpec, metav1.ConditionFalse)
 }
 
-func TestReconcileRejectsImmutableChanges(t *testing.T) {
-	name := fmt.Sprintf("immutable-%d", time.Now().UnixNano())
+func TestReconcileRejectsShardChangesLargerThanOneStep(t *testing.T) {
+	name := fmt.Sprintf("shard-step-%d", time.Now().UnixNano())
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode: redisv1alpha1.RedisModeCluster,
+			Cluster: &redisv1alpha1.ClusterSpec{
+				Shards:           1,
+				ReplicasPerShard: 0,
+			},
+		},
+	}
+	mustCreateRedis(t, obj)
+
+	r := newTestReconciler()
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("first reconcile failed: %v", err)
+	}
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("second reconcile failed: %v", err)
+	}
+
+	fetched := &redisv1alpha1.Redis{}
+	if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(obj), fetched); err != nil {
+		t.Fatalf("get redis failed: %v", err)
+	}
+	fetched.Spec.Cluster.Shards = 3
+	if err := k8sClient.Update(testCtx, fetched); err != nil {
+		if !apierrors.IsInvalid(err) {
+			t.Fatalf("expected invalid error on >1 shard step update, got: %v", err)
+		}
+		return
+	}
+	t.Fatalf("expected >1 shard step update to be rejected by API validation")
+}
+
+func TestReconcileAllowsSingleStepShardChanges(t *testing.T) {
+	name := fmt.Sprintf("shard-step-allow-%d", time.Now().UnixNano())
 	obj := &redisv1alpha1.Redis{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: redisv1alpha1.RedisSpec{
@@ -203,12 +240,45 @@ func TestReconcileRejectsImmutableChanges(t *testing.T) {
 	}
 	fetched.Spec.Cluster.Shards = 2
 	if err := k8sClient.Update(testCtx, fetched); err != nil {
+		t.Fatalf("expected single-step shard update to be allowed, got: %v", err)
+	}
+}
+
+func TestReconcileRejectsImmutableReplicaPerShardChanges(t *testing.T) {
+	name := fmt.Sprintf("replicas-immutable-%d", time.Now().UnixNano())
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode: redisv1alpha1.RedisModeCluster,
+			Cluster: &redisv1alpha1.ClusterSpec{
+				Shards:           1,
+				ReplicasPerShard: 0,
+			},
+		},
+	}
+	mustCreateRedis(t, obj)
+
+	r := newTestReconciler()
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("first reconcile failed: %v", err)
+	}
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("second reconcile failed: %v", err)
+	}
+
+	fetched := &redisv1alpha1.Redis{}
+	if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(obj), fetched); err != nil {
+		t.Fatalf("get redis failed: %v", err)
+	}
+	fetched.Spec.Cluster.ReplicasPerShard = 1
+	if err := k8sClient.Update(testCtx, fetched); err != nil {
 		if !apierrors.IsInvalid(err) {
-			t.Fatalf("expected invalid error on immutable update, got: %v", err)
+			t.Fatalf("expected invalid error on replicasPerShard update, got: %v", err)
 		}
 		return
 	}
-	t.Fatalf("expected immutable update to be rejected by API validation")
+	t.Fatalf("expected replicasPerShard update to be rejected by API validation")
 }
 
 func TestReconcileSetsUnhealthyWhenClusterHealFails(t *testing.T) {
@@ -363,6 +433,10 @@ type trackingAdminClient struct {
 func (t *trackingAdminClient) HealCluster(_ context.Context, _, _ string) error {
 	t.clusterCalls++
 	return t.clusterErr
+}
+
+func (t *trackingAdminClient) ObserveCluster(_ context.Context, _, _ string) (appinterfaces.ClusterObservation, error) {
+	return appinterfaces.ClusterObservation{}, nil
 }
 
 func (t *trackingAdminClient) HealFailover(_ context.Context, _, _ string) error {

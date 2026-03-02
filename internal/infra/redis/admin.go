@@ -61,6 +61,36 @@ func (c *AdminClient) HealCluster(ctx context.Context, namespace, name string) e
 	return c.healCluster(ctx, obj, password, tlsConfig)
 }
 
+func (c *AdminClient) ObserveCluster(ctx context.Context, namespace, name string) (appinterfaces.ClusterObservation, error) {
+	obj, err := c.loadRedis(ctx, namespace, name)
+	if err != nil {
+		return appinterfaces.ClusterObservation{}, err
+	}
+	if obj.Spec.Mode != redisv1alpha1.RedisModeCluster || obj.Spec.Cluster == nil {
+		return appinterfaces.ClusterObservation{}, nil
+	}
+
+	password, err := c.readSecretValue(ctx, namespace, obj.Spec.Auth.RedisPasswordSecretRef)
+	if err != nil {
+		return appinterfaces.ClusterObservation{}, err
+	}
+	tlsConfig, err := c.readTLSConfig(ctx, namespace, obj.Spec.TLS)
+	if err != nil {
+		return appinterfaces.ClusterObservation{}, err
+	}
+
+	topology, err := buildClusterTopology(
+		obj.Namespace,
+		obj.Name,
+		obj.Spec.Cluster.Shards,
+		obj.Spec.Cluster.ReplicasPerShard,
+	)
+	if err != nil {
+		return appinterfaces.ClusterObservation{}, err
+	}
+	return c.observeClusterInfo(ctx, topology.Masters, password, tlsConfig)
+}
+
 func (c *AdminClient) HealFailover(ctx context.Context, namespace, name string) error {
 	obj, err := c.loadRedis(ctx, namespace, name)
 	if err != nil {

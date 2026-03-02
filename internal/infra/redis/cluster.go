@@ -8,6 +8,7 @@ import (
 	"time"
 
 	redisv1alpha1 "github.com/storbase/redis-operator/api/v1alpha1"
+	appinterfaces "github.com/storbase/redis-operator/internal/interfaces"
 )
 
 type slotRange struct {
@@ -189,6 +190,50 @@ func (c *AdminClient) isClusterHealthy(ctx context.Context, probes []string, pas
 		return false, fmt.Errorf("cluster probe failed: %w", lastErr)
 	}
 	return false, nil
+}
+
+func (c *AdminClient) observeClusterInfo(
+	ctx context.Context,
+	probes []string,
+	password string,
+	tlsConfig *tls.Config,
+) (appinterfaces.ClusterObservation, error) {
+	var lastErr error
+	for _, addr := range probes {
+		cli := c.newRedisClient(addr, password, tlsConfig)
+		commandCtx, cancel := c.commandContext(ctx)
+		raw, err := cli.ClusterInfo(commandCtx).Result()
+		cancel()
+		_ = cli.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		fields := parseInfoFields(raw)
+		clusterSize, err := parseIntField(fields, "cluster_size")
+		if err != nil {
+			return appinterfaces.ClusterObservation{}, err
+		}
+		knownNodes, err := parseIntField(fields, "cluster_known_nodes")
+		if err != nil {
+			return appinterfaces.ClusterObservation{}, err
+		}
+		slotsAssigned, err := parseIntField(fields, "cluster_slots_assigned")
+		if err != nil {
+			return appinterfaces.ClusterObservation{}, err
+		}
+		return appinterfaces.ClusterObservation{
+			State:         fields["cluster_state"],
+			ClusterSize:   int32(clusterSize),
+			KnownNodes:    int32(knownNodes),
+			SlotsAssigned: int32(slotsAssigned),
+		}, nil
+	}
+	if lastErr != nil {
+		return appinterfaces.ClusterObservation{}, fmt.Errorf("cluster observation failed: %w", lastErr)
+	}
+	return appinterfaces.ClusterObservation{}, fmt.Errorf("cluster observation failed: no probe address available")
 }
 
 func (c *AdminClient) bootstrapMeet(ctx context.Context, coordinator string, peers []string, password string, tlsConfig *tls.Config) error {

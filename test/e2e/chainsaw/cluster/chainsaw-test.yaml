@@ -17,9 +17,11 @@ spec:
             '*.redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
             '*.redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
             '*.redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-3.redis-e2e.svc.cluster.local' \
             'redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
             'redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
-            'redis-cluster-shard-2.redis-e2e.svc.cluster.local'
+            'redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-3.redis-e2e.svc.cluster.local'
     - apply:
         file: redis.yaml
     - assert:
@@ -30,3 +32,56 @@ spec:
         content: |
           set -eu
           bash ../../scripts/assert_cluster.sh redis-e2e redis-cluster cluster-pass-123
+
+  - name: scale-out
+    try:
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-cluster --type=merge -p '{"spec":{"cluster":{"shards":4}}}'
+    - script:
+        timeout: 15m
+        content: |
+          set -eu
+          bash ../../scripts/assert_cluster.sh redis-e2e redis-cluster cluster-pass-123
+
+  - name: scale-in
+    try:
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-cluster --type=merge -p '{"spec":{"cluster":{"shards":3}}}'
+    - script:
+        timeout: 15m
+        content: |
+          set -eu
+          bash ../../scripts/assert_cluster.sh redis-e2e redis-cluster cluster-pass-123
+    - script:
+        timeout: 8m
+        content: |
+          set -eu
+          delete_deadline=$((SECONDS + 360))
+          while kubectl -n redis-e2e get statefulset redis-cluster-shard-3 >/dev/null 2>&1; do
+            if [ "$SECONDS" -ge "$delete_deadline" ]; then
+              echo "timeout waiting redis-cluster-shard-3 deletion"
+              exit 1
+            fi
+            sleep 2
+          done
+          while kubectl -n redis-e2e get service redis-cluster-shard-3 >/dev/null 2>&1; do
+            if [ "$SECONDS" -ge "$delete_deadline" ]; then
+              echo "timeout waiting service redis-cluster-shard-3 deletion"
+              exit 1
+            fi
+            sleep 2
+          done
+          if kubectl -n redis-e2e get pvc data-redis-cluster-shard-3-0 >/dev/null 2>&1; then
+            echo "unexpected pvc data-redis-cluster-shard-3-0 still exists"
+            exit 1
+          fi
+          if kubectl -n redis-e2e get pvc data-redis-cluster-shard-3-1 >/dev/null 2>&1; then
+            echo "unexpected pvc data-redis-cluster-shard-3-1 still exists"
+            exit 1
+          fi

@@ -46,7 +46,21 @@ const (
 	ReasonApplyFailed         RedisHealthReason = "ApplyFailed"
 	ReasonClusterCheckFailed  RedisHealthReason = "ClusterCheckFailed"
 	ReasonFailoverCheckFailed RedisHealthReason = "FailoverCheckFailed"
+	ReasonScaling             RedisHealthReason = "Scaling"
+	ReasonScaleFailed         RedisHealthReason = "ScaleFailed"
 	ReasonHealthy             RedisHealthReason = "Healthy"
+)
+
+// ClusterScalePhase represents the current phase of cluster shard scaling.
+type ClusterScalePhase string
+
+const (
+	ClusterScalePhaseIdle       ClusterScalePhase = "Idle"
+	ClusterScalePhasePending    ClusterScalePhase = "Pending"
+	ClusterScalePhasePreparing  ClusterScalePhase = "Preparing"
+	ClusterScalePhaseRunning    ClusterScalePhase = "Running"
+	ClusterScalePhaseFinalizing ClusterScalePhase = "Finalizing"
+	ClusterScalePhaseFailed     ClusterScalePhase = "Failed"
 )
 
 // AuthSpec configures references to password secrets.
@@ -98,6 +112,26 @@ type ClusterSpec struct {
 
 	Storage  StorageSpec `json:"storage,omitempty"`
 	RedisPod PodPolicy   `json:"redisPod,omitempty"`
+}
+
+// ClusterRuntimeStatus stores observed cluster topology information.
+type ClusterRuntimeStatus struct {
+	// ObservedShards is the latest observed number of cluster masters.
+	ObservedShards int32 `json:"observedShards,omitempty"`
+}
+
+// ClusterScaleStatus stores shard scaling operation runtime state.
+type ClusterScaleStatus struct {
+	Phase              ClusterScalePhase `json:"phase,omitempty"`
+	FromShards         int32             `json:"fromShards,omitempty"`
+	ToShards           int32             `json:"toShards,omitempty"`
+	ObservedGeneration int64             `json:"observedGeneration,omitempty"`
+	// RetryToken stores the last observed manual retry token value.
+	RetryToken  string       `json:"retryToken,omitempty"`
+	JobName     string       `json:"jobName,omitempty"`
+	LastError   string       `json:"lastError,omitempty"`
+	StartedAt   *metav1.Time `json:"startedAt,omitempty"`
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 }
 
 // FailoverSpec defines Redis + Sentinel failover topology.
@@ -179,9 +213,12 @@ type RedisSpec struct {
 
 // RedisStatus defines the observed state of Redis.
 type RedisStatus struct {
-	Endpoint string            `json:"endpoint,omitempty"`
-	Health   bool              `json:"health,omitempty"`
-	Reason   RedisHealthReason `json:"reason,omitempty"`
+	Endpoint string               `json:"endpoint,omitempty"`
+	Health   bool                 `json:"health,omitempty"`
+	Reason   RedisHealthReason    `json:"reason,omitempty"`
+	Cluster  ClusterRuntimeStatus `json:"cluster,omitempty"`
+	// ClusterScale tracks shard scale operation status in Cluster mode.
+	ClusterScale ClusterScaleStatus `json:"clusterScale,omitempty"`
 
 	// ObservedRedisReadyReplicas is the current number of ready redis pods observed from StatefulSet status.
 	ObservedRedisReadyReplicas int32 `json:"observedRedisReadyReplicas,omitempty"`
@@ -207,7 +244,7 @@ type RedisStatus struct {
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.sentinelConfig) || size(self.spec.sentinelConfig) == 0",message="sentinelConfig is only allowed in Failover mode"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.failover) || self.spec.failover.quorum <= self.spec.failover.sentinelReplicas",message="failover.quorum must be <= failover.sentinelReplicas"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == oldSelf.spec.mode",message="mode is immutable"
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec.cluster) || !has(self.spec.cluster) || self.spec.cluster.shards == oldSelf.spec.cluster.shards",message="cluster.shards is immutable in v1"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec.cluster) || !has(self.spec.cluster) || self.spec.cluster.shards == oldSelf.spec.cluster.shards || self.spec.cluster.shards == oldSelf.spec.cluster.shards + 1 || self.spec.cluster.shards == oldSelf.spec.cluster.shards - 1",message="cluster.shards can only change by 1 per update"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec.cluster) || !has(self.spec.cluster) || self.spec.cluster.replicasPerShard == oldSelf.spec.cluster.replicasPerShard",message="cluster.replicasPerShard is immutable in v1"
 
 // Redis is the Schema for the redis API.

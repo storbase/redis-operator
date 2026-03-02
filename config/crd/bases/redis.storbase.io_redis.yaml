@@ -3927,6 +3927,48 @@ spec:
           status:
             description: RedisStatus defines the observed state of Redis.
             properties:
+              cluster:
+                description: ClusterRuntimeStatus stores observed cluster topology
+                  information.
+                properties:
+                  observedShards:
+                    description: ObservedShards is the latest observed number of cluster
+                      masters.
+                    format: int32
+                    type: integer
+                type: object
+              clusterScale:
+                description: ClusterScale tracks shard scale operation status in Cluster
+                  mode.
+                properties:
+                  completedAt:
+                    format: date-time
+                    type: string
+                  fromShards:
+                    format: int32
+                    type: integer
+                  jobName:
+                    type: string
+                  lastError:
+                    type: string
+                  observedGeneration:
+                    format: int64
+                    type: integer
+                  phase:
+                    description: ClusterScalePhase represents the current phase of
+                      cluster shard scaling.
+                    type: string
+                  retryToken:
+                    description: RetryToken stores the last observed manual retry
+                      token value.
+                    type: string
+                  startedAt:
+                    format: date-time
+                    type: string
+                  toShards:
+                    format: int32
+                    type: integer
+                type: object
               conditions:
                 description: Conditions contains the latest observations of this resource's
                   runtime state.
@@ -4019,9 +4061,10 @@ spec:
           rule: '!has(self.spec.failover) || self.spec.failover.quorum <= self.spec.failover.sentinelReplicas'
         - message: mode is immutable
           rule: self.spec.mode == oldSelf.spec.mode
-        - message: cluster.shards is immutable in v1
+        - message: cluster.shards can only change by 1 per update
           rule: '!has(oldSelf.spec.cluster) || !has(self.spec.cluster) || self.spec.cluster.shards
-            == oldSelf.spec.cluster.shards'
+            == oldSelf.spec.cluster.shards || self.spec.cluster.shards == oldSelf.spec.cluster.shards
+            + 1 || self.spec.cluster.shards == oldSelf.spec.cluster.shards - 1'
         - message: cluster.replicasPerShard is immutable in v1
           rule: '!has(oldSelf.spec.cluster) || !has(self.spec.cluster) || self.spec.cluster.replicasPerShard
             == oldSelf.spec.cluster.replicasPerShard'

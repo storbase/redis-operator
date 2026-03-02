@@ -38,6 +38,8 @@ import (
 	appinterfaces "github.com/storbase/redis-operator/internal/interfaces"
 	"github.com/storbase/redis-operator/internal/kubeutil"
 	"github.com/storbase/redis-operator/internal/plan"
+	clusterTopology "github.com/storbase/redis-operator/internal/topology/cluster"
+	failoverTopology "github.com/storbase/redis-operator/internal/topology/failover"
 )
 
 const runtimePrerequisitesRequeueAfter = 3 * time.Second
@@ -64,7 +66,9 @@ type statefulSetStatusSnapshot struct {
 // +kubebuilder:rbac:groups=redis.storbase.io,resources=redis/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=redis.storbase.io,resources=redis/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;configmaps;pods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -153,7 +157,21 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	switch redis.Spec.Mode {
 	case redisv1alpha1.RedisModeCluster:
-		if err := r.RedisAdmin.HealCluster(ctx, redis.Namespace, redis.Name); err != nil {
+		scalingHandled, scalingResult, scalingErr := r.reconcileClusterScaling(ctx, redis)
+		if scalingErr != nil {
+			log.Error(scalingErr, "cluster scale reconcile failed")
+			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
+				return ctrl.Result{}, patchErr
+			}
+			return ctrl.Result{}, scalingErr
+		}
+		if scalingHandled {
+			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
+				return ctrl.Result{}, patchErr
+			}
+			return scalingResult, nil
+		}
+		if err := clusterTopology.HealRuntime(ctx, r.RedisAdmin, redis.Namespace, redis.Name); err != nil {
 			log.Error(err, "cluster bootstrap failed")
 			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonClusterCheckFailed, err.Error())
 			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
@@ -162,7 +180,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			return ctrl.Result{}, err
 		}
 	case redisv1alpha1.RedisModeFailover:
-		if err := r.RedisAdmin.HealFailover(ctx, redis.Namespace, redis.Name); err != nil {
+		if err := failoverTopology.HealRuntime(ctx, r.RedisAdmin, redis.Namespace, redis.Name); err != nil {
 			log.Error(err, "failover heal failed")
 			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonFailoverCheckFailed, err.Error())
 			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {

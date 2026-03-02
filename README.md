@@ -13,7 +13,7 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
   - Use stable Kubernetes DNS hostnames (StatefulSet/Service) for Redis node identity.
   - This avoids broken topology/replication links after Pod restarts or rescheduling when Pod IPs change.
 - [x] Supports TLS with user-provided certificates
-- [ ] Supports scale in/out
+- [x] Supports cluster shard scale in/out
 
 ## Install with Helm 4
 

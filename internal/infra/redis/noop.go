@@ -18,6 +18,10 @@ func (n *NoopAdminClient) HealCluster(_ context.Context, _, _ string) error {
 	return nil
 }
 
+func (n *NoopAdminClient) ObserveCluster(_ context.Context, _, _ string) (appinterfaces.ClusterObservation, error) {
+	return appinterfaces.ClusterObservation{}, nil
+}
+
 func (n *NoopAdminClient) HealFailover(_ context.Context, _, _ string) error {
 	return nil
 }

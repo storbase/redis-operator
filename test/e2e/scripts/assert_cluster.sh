@@ -57,13 +57,13 @@ while true; do
 done
 
 known_nodes="$(printf '%s\n' "$cluster_info" | awk -F: '/^cluster_known_nodes:/{print $2}' | tr -d '\r')"
-if [ "$known_nodes" -lt 6 ]; then
+if [ "$known_nodes" -lt "$expected_pods" ]; then
   echo "unexpected cluster_known_nodes: $known_nodes"
   exit 1
 fi
 
 cluster_size="$(printf '%s\n' "$cluster_info" | awk -F: '/^cluster_size:/{print $2}' | tr -d '\r')"
-if [ "$cluster_size" -ne 3 ]; then
+if [ "$cluster_size" -ne "$shards" ]; then
   echo "unexpected cluster_size: $cluster_size"
   exit 1
 fi
@@ -71,11 +71,12 @@ fi
 nodes="$(kubectl -n "$namespace" exec "$seed_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$seed_host" -p 6379 "${redis_cli_auth[@]}" CLUSTER NODES)"
 master_count="$(printf '%s\n' "$nodes" | awk '$3 ~ /master/ {count++} END {print count+0}')"
 replica_count="$(printf '%s\n' "$nodes" | awk '$3 ~ /slave|replica/ {count++} END {print count+0}')"
-if [ "$master_count" -ne 3 ]; then
+if [ "$master_count" -ne "$shards" ]; then
   echo "unexpected master count: $master_count"
   exit 1
 fi
-if [ "$replica_count" -ne 3 ]; then
+expected_replicas=$((shards * replicas_per_shard))
+if [ "$replica_count" -ne "$expected_replicas" ]; then
   echo "unexpected replica count: $replica_count"
   exit 1
 fi
@@ -87,7 +88,7 @@ if [ -z "$endpoint" ]; then
 fi
 
 seed_count="$(printf '%s' "$endpoint" | awk -F, '{print NF}')"
-if [ "$seed_count" -ne 3 ]; then
+if [ "$seed_count" -ne "$shards" ]; then
   echo "unexpected endpoint seed count: $seed_count endpoint=$endpoint"
   exit 1
 fi
