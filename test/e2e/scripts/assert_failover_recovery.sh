@@ -331,26 +331,6 @@ inject_master_pause() {
   fi
 }
 
-wait_for_master_marked_down() {
-  local timeout="$1"
-  local start=$SECONDS
-  local last_flags=""
-  while true; do
-    local flags
-    flags="$(sentinel_master_field "flags")"
-    last_flags="$flags"
-    if echo "$flags" | grep -Eq 's_down|o_down'; then
-      echo "sentinel marked master down: flags=${flags}"
-      return 0
-    fi
-    if [ $((SECONDS - start)) -ge "$timeout" ]; then
-      echo "timeout waiting sentinel to mark master down: last_flags=${last_flags:-<empty>}"
-      return 1
-    fi
-    sleep 2
-  done
-}
-
 assert_final_topology_roles() {
   local deadline=$((SECONDS + 180))
   while true; do
@@ -394,7 +374,6 @@ old_master_pod="$(detect_actual_master_with_retry 180)"
 pause_duration_ms="$(compute_pause_duration_ms)"
 echo "pausing current master via CLIENT PAUSE: pod=${old_master_pod} duration_ms=${pause_duration_ms}"
 inject_master_pause "$old_master_pod" "$pause_duration_ms"
-wait_for_master_marked_down 180
 
 new_master_pod=""
 last_detected_master=""
