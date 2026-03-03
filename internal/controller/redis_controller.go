@@ -157,14 +157,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	switch redis.Spec.Mode {
 	case redisv1alpha1.RedisModeCluster:
-		scalingHandled, scalingResult, scalingErr := r.reconcileClusterScaling(ctx, redis)
-		if scalingErr != nil {
-			log.Error(scalingErr, "cluster scale reconcile failed")
-			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-				return ctrl.Result{}, patchErr
-			}
-			return ctrl.Result{}, scalingErr
-		}
+		scalingHandled, scalingResult := r.reconcileClusterScaling(ctx, redis)
 		if scalingHandled {
 			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
 				return ctrl.Result{}, patchErr

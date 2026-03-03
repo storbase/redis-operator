@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	redisv1alpha1 "github.com/storbase/redis-operator/api/v1alpha1"
+	appinterfaces "github.com/storbase/redis-operator/internal/interfaces"
 	"github.com/storbase/redis-operator/internal/kubeutil"
 	"github.com/storbase/redis-operator/internal/manifests"
 	clusterTopology "github.com/storbase/redis-operator/internal/topology/cluster"
@@ -26,14 +27,57 @@ const (
 	clusterScaleRetryTokenAnnotation   = "redis.storbase.io/cluster-scale-retry-token"
 )
 
+type clusterScaleReconcileContext struct {
+	now            metav1.Time
+	scale          *redisv1alpha1.ClusterScaleStatus
+	retryToken     string
+	observation    appinterfaces.ClusterObservation
+	observeErr     error
+	targetShards   int32
+	observedShards int32
+	scalingNeeded  bool
+}
+
 func (r *RedisReconciler) reconcileClusterScaling(
 	ctx context.Context,
 	redis *redisv1alpha1.Redis,
-) (bool, ctrl.Result, error) {
+) (bool, ctrl.Result) {
 	if redis.Spec.Mode != redisv1alpha1.RedisModeCluster || redis.Spec.Cluster == nil {
-		return false, ctrl.Result{}, nil
+		return false, ctrl.Result{}
 	}
 
+	state := r.newClusterScaleReconcileContext(ctx, redis)
+	if !state.scalingNeeded && state.scale.Phase == redisv1alpha1.ClusterScalePhaseIdle {
+		return false, ctrl.Result{}
+	}
+
+	switch state.scale.Phase {
+	case redisv1alpha1.ClusterScalePhaseIdle:
+		return true, r.reconcileClusterScaleIdle(redis, state)
+
+	case redisv1alpha1.ClusterScalePhasePending:
+		return true, r.reconcileClusterScalePending(redis, state)
+
+	case redisv1alpha1.ClusterScalePhasePreparing:
+		return true, r.reconcileClusterScalePreparing(ctx, redis, state)
+
+	case redisv1alpha1.ClusterScalePhaseRunning:
+		return true, r.reconcileClusterScaleRunning(ctx, redis, state)
+
+	case redisv1alpha1.ClusterScalePhaseFinalizing:
+		return true, r.reconcileClusterScaleFinalizing(ctx, redis, state)
+
+	case redisv1alpha1.ClusterScalePhaseFailed:
+		return true, r.reconcileClusterScaleFailed(redis, state)
+	}
+
+	return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
+}
+
+func (r *RedisReconciler) newClusterScaleReconcileContext(
+	ctx context.Context,
+	redis *redisv1alpha1.Redis,
+) *clusterScaleReconcileContext {
 	now := metav1.NewTime(time.Now())
 	scale := &redis.Status.ClusterScale
 	retryToken := clusterScaleRetryToken(redis)
@@ -56,131 +100,173 @@ func (r *RedisReconciler) reconcileClusterScaling(
 		observedShards = targetShards
 		redis.Status.Cluster.ObservedShards = targetShards
 	}
-	scalingNeeded := clusterTopology.NeedsScaling(observedShards, targetShards)
-	if !scalingNeeded && scale.Phase == redisv1alpha1.ClusterScalePhaseIdle {
-		return false, ctrl.Result{}, nil
+
+	return &clusterScaleReconcileContext{
+		now:            now,
+		scale:          scale,
+		retryToken:     retryToken,
+		observation:    observation,
+		observeErr:     observeErr,
+		targetShards:   targetShards,
+		observedShards: observedShards,
+		scalingNeeded:  clusterTopology.NeedsScaling(observedShards, targetShards),
+	}
+}
+
+func (r *RedisReconciler) reconcileClusterScaleIdle(
+	redis *redisv1alpha1.Redis,
+	state *clusterScaleReconcileContext,
+) ctrl.Result {
+	initializeClusterScaleStatus(state.scale, state.observedShards, state.targetShards, redis.Generation, state.retryToken, state.now)
+	r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scaling started: %d -> %d", state.observedShards, state.targetShards))
+	return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
+}
+
+func (r *RedisReconciler) reconcileClusterScalePending(
+	redis *redisv1alpha1.Redis,
+	state *clusterScaleReconcileContext,
+) ctrl.Result {
+	if !state.scalingNeeded {
+		resetClusterScaleStatus(state.scale, state.now)
+		return ctrl.Result{}
 	}
 
-	switch scale.Phase {
-	case redisv1alpha1.ClusterScalePhaseIdle:
-		initializeClusterScaleStatus(scale, observedShards, targetShards, redis.Generation, retryToken, now)
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scaling started: %d -> %d", observedShards, targetShards))
-		return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
+	scale := state.scale
+	scale.FromShards = state.observedShards
+	scale.ToShards = state.targetShards
+	scale.ObservedGeneration = redis.Generation
+	scale.RetryToken = state.retryToken
+	if err := clusterTopology.ValidateSingleStep(scale.FromShards, scale.ToShards); err != nil {
+		r.markClusterScaleFailed(redis, err.Error(), state.now)
+		return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
+	}
+	scale.Phase = redisv1alpha1.ClusterScalePhasePreparing
+	r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scaling preparing: %d -> %d", scale.FromShards, scale.ToShards))
+	return ctrl.Result{RequeueAfter: clusterScalePrepareRequeueAfter}
+}
 
-	case redisv1alpha1.ClusterScalePhasePending:
-		if !scalingNeeded {
-			resetClusterScaleStatus(scale, now)
-			return true, ctrl.Result{}, nil
+func (r *RedisReconciler) reconcileClusterScalePreparing(
+	ctx context.Context,
+	redis *redisv1alpha1.Redis,
+	state *clusterScaleReconcileContext,
+) ctrl.Result {
+	if !state.scalingNeeded {
+		resetClusterScaleStatus(state.scale, state.now)
+		return ctrl.Result{}
+	}
+
+	ready, reason, err := r.clusterScalePrerequisitesReady(ctx, redis, state.scale)
+	if err != nil {
+		r.markClusterScaleFailed(redis, err.Error(), state.now)
+		return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
+	}
+	if !ready {
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, reason)
+		return ctrl.Result{RequeueAfter: clusterScalePrepareRequeueAfter}
+	}
+
+	jobName, err := r.ensureClusterScaleJob(ctx, redis, state.scale)
+	if err != nil {
+		r.markClusterScaleFailed(redis, err.Error(), state.now)
+		return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
+	}
+	state.scale.JobName = jobName
+	state.scale.Phase = redisv1alpha1.ClusterScalePhaseRunning
+	r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scale job %s is running", jobName))
+	return ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}
+}
+
+func (r *RedisReconciler) reconcileClusterScaleRunning(
+	ctx context.Context,
+	redis *redisv1alpha1.Redis,
+	state *clusterScaleReconcileContext,
+) ctrl.Result {
+	done, err := r.observeClusterScaleJob(ctx, redis, state.scale)
+	if err != nil {
+		r.markClusterScaleFailed(redis, err.Error(), state.now)
+		return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
+	}
+	if !done {
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scale job %s is running", state.scale.JobName))
+		return ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}
+	}
+
+	state.scale.Phase = redisv1alpha1.ClusterScalePhaseFinalizing
+	return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
+}
+
+func (r *RedisReconciler) reconcileClusterScaleFinalizing(
+	ctx context.Context,
+	redis *redisv1alpha1.Redis,
+	state *clusterScaleReconcileContext,
+) ctrl.Result {
+	if state.observeErr != nil {
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("waiting cluster observation in finalizing: %v", state.observeErr))
+		return ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}
+	}
+	if state.observation.State != "ok" ||
+		state.observation.SlotsAssigned != 16384 ||
+		state.observation.ClusterSize != state.scale.ToShards {
+		r.setHealthUnhealthy(
+			redis,
+			redisv1alpha1.ReasonScaling,
+			fmt.Sprintf(
+				"waiting cluster convergence: state=%s slots=%d size=%d target=%d",
+				state.observation.State,
+				state.observation.SlotsAssigned,
+				state.observation.ClusterSize,
+				state.scale.ToShards,
+			),
+		)
+		return ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}
+	}
+
+	if state.scale.ToShards < state.scale.FromShards {
+		removedShard := state.scale.FromShards - 1
+		if err := r.cleanupRemovedClusterShardResources(ctx, redis, removedShard); err != nil {
+			r.markClusterScaleFailed(redis, err.Error(), state.now)
+			return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
 		}
-		scale.FromShards = observedShards
-		scale.ToShards = targetShards
+	}
+
+	redis.Status.Cluster.ObservedShards = state.scale.ToShards
+	resetClusterScaleStatus(state.scale, state.now)
+	r.setHealthHealthy(redis, fmt.Sprintf("Cluster scale completed: %d -> %d", state.scale.FromShards, state.scale.ToShards))
+	return ctrl.Result{}
+}
+
+func (r *RedisReconciler) reconcileClusterScaleFailed(
+	redis *redisv1alpha1.Redis,
+	state *clusterScaleReconcileContext,
+) ctrl.Result {
+	scale := state.scale
+	if scale.ObservedGeneration != redis.Generation || scale.ToShards != state.targetShards {
+		scale.FromShards = state.observedShards
+		scale.ToShards = state.targetShards
 		scale.ObservedGeneration = redis.Generation
-		scale.RetryToken = retryToken
-		if err := clusterTopology.ValidateSingleStep(scale.FromShards, scale.ToShards); err != nil {
-			r.markClusterScaleFailed(redis, err.Error(), now)
-			return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
-		}
-		scale.Phase = redisv1alpha1.ClusterScalePhasePreparing
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scaling preparing: %d -> %d", scale.FromShards, scale.ToShards))
-		return true, ctrl.Result{RequeueAfter: clusterScalePrepareRequeueAfter}, nil
-
-	case redisv1alpha1.ClusterScalePhasePreparing:
-		if !scalingNeeded {
-			resetClusterScaleStatus(scale, now)
-			return true, ctrl.Result{}, nil
-		}
-		ready, reason, err := r.clusterScalePrerequisitesReady(ctx, redis, scale)
-		if err != nil {
-			r.markClusterScaleFailed(redis, err.Error(), now)
-			return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
-		}
-		if !ready {
-			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, reason)
-			return true, ctrl.Result{RequeueAfter: clusterScalePrepareRequeueAfter}, nil
-		}
-		jobName, err := r.ensureClusterScaleJob(ctx, redis, scale)
-		if err != nil {
-			r.markClusterScaleFailed(redis, err.Error(), now)
-			return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
-		}
-		scale.JobName = jobName
-		scale.Phase = redisv1alpha1.ClusterScalePhaseRunning
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scale job %s is running", jobName))
-		return true, ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}, nil
-
-	case redisv1alpha1.ClusterScalePhaseRunning:
-		done, err := r.observeClusterScaleJob(ctx, redis, scale)
-		if err != nil {
-			r.markClusterScaleFailed(redis, err.Error(), now)
-			return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
-		}
-		if !done {
-			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("cluster scale job %s is running", scale.JobName))
-			return true, ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}, nil
-		}
-		scale.Phase = redisv1alpha1.ClusterScalePhaseFinalizing
-		return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
-
-	case redisv1alpha1.ClusterScalePhaseFinalizing:
-		if observeErr != nil {
-			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("waiting cluster observation in finalizing: %v", observeErr))
-			return true, ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}, nil
-		}
-		if observation.State != "ok" || observation.SlotsAssigned != 16384 || observation.ClusterSize != scale.ToShards {
-			r.setHealthUnhealthy(
-				redis,
-				redisv1alpha1.ReasonScaling,
-				fmt.Sprintf(
-					"waiting cluster convergence: state=%s slots=%d size=%d target=%d",
-					observation.State,
-					observation.SlotsAssigned,
-					observation.ClusterSize,
-					scale.ToShards,
-				),
-			)
-			return true, ctrl.Result{RequeueAfter: clusterScaleRunningRequeueAfter}, nil
-		}
-		if scale.ToShards < scale.FromShards {
-			removedShard := scale.FromShards - 1
-			if err := r.cleanupRemovedClusterShardResources(ctx, redis, removedShard); err != nil {
-				r.markClusterScaleFailed(redis, err.Error(), now)
-				return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
-			}
-		}
-		redis.Status.Cluster.ObservedShards = scale.ToShards
-		resetClusterScaleStatus(scale, now)
-		r.setHealthHealthy(redis, fmt.Sprintf("Cluster scale completed: %d -> %d", scale.FromShards, scale.ToShards))
-		return true, ctrl.Result{}, nil
-
-	case redisv1alpha1.ClusterScalePhaseFailed:
-		if scale.ObservedGeneration != redis.Generation || scale.ToShards != targetShards {
-			scale.FromShards = observedShards
-			scale.ToShards = targetShards
-			scale.ObservedGeneration = redis.Generation
-			scale.RetryToken = retryToken
-			scale.JobName = ""
-			scale.LastError = ""
-			scale.StartedAt = &now
-			scale.CompletedAt = nil
-			scale.Phase = redisv1alpha1.ClusterScalePhasePending
-			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, "cluster scale target changed, restarting scale workflow")
-			return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
-		}
-		if retryToken == scale.RetryToken {
-			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaleFailed, fmt.Sprintf("%s; retry by updating annotation %s", failMessageOrDefault(scale.LastError), clusterScaleRetryTokenAnnotation))
-			return true, ctrl.Result{}, nil
-		}
-		scale.RetryToken = retryToken
-		scale.Phase = redisv1alpha1.ClusterScalePhasePending
+		scale.RetryToken = state.retryToken
 		scale.JobName = ""
 		scale.LastError = ""
-		scale.StartedAt = &now
+		scale.StartedAt = &state.now
 		scale.CompletedAt = nil
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("manual retry accepted via annotation %s", clusterScaleRetryTokenAnnotation))
-		return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
+		scale.Phase = redisv1alpha1.ClusterScalePhasePending
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, "cluster scale target changed, restarting scale workflow")
+		return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
 	}
 
-	return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
+	if state.retryToken == scale.RetryToken {
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaleFailed, fmt.Sprintf("%s; retry by updating annotation %s", failMessageOrDefault(scale.LastError), clusterScaleRetryTokenAnnotation))
+		return ctrl.Result{}
+	}
+
+	scale.RetryToken = state.retryToken
+	scale.Phase = redisv1alpha1.ClusterScalePhasePending
+	scale.JobName = ""
+	scale.LastError = ""
+	scale.StartedAt = &state.now
+	scale.CompletedAt = nil
+	r.setHealthUnhealthy(redis, redisv1alpha1.ReasonScaling, fmt.Sprintf("manual retry accepted via annotation %s", clusterScaleRetryTokenAnnotation))
+	return ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}
 }
 
 func initializeClusterScaleStatus(

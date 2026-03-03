@@ -69,7 +69,7 @@ func TestNewClusterScaleJobIncludesTLSMountWhenEnabled(t *testing.T) {
 	}
 	foundVolume := false
 	for _, volume := range job.Spec.Template.Spec.Volumes {
-		if volume.Name == "tls" && volume.VolumeSource.Secret != nil && volume.VolumeSource.Secret.SecretName == "redis-tls" {
+		if volume.Name == "tls" && volume.Secret != nil && volume.Secret.SecretName == "redis-tls" {
 			foundVolume = true
 		}
 	}
