@@ -85,6 +85,7 @@ jobs:
         suite:
           - cluster
           - failover
+          - failover-external
     timeout-minutes: 40
     steps:
       - name: Checkout
