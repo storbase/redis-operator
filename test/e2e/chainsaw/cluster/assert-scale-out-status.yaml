@@ -1,0 +1,14 @@
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-cluster
+  namespace: redis-e2e
+status:
+  health: true
+  reason: Healthy
+  observedRedisReadyReplicas: 8
+  cluster:
+    observedShards: 4
+  clusterScale:
+    phase: Idle
+    toShards: 4

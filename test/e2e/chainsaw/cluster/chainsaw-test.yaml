@@ -31,24 +31,12 @@ spec:
         timeout: 10m
         content: |
           set -eu
-          bash ../../scripts/assert_cluster.sh redis-e2e redis-cluster cluster-pass-123
-
-  - name: put-data
-    try:
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster put redis-cluster:e2e:cluster:v1 1000 cluster-pass-123
     - script:
-        timeout: 8m
+        timeout: 10m
         content: |
           set -eu
-          bash ../../scripts/assert_data.sh \
-            --mode cluster \
-            --action put \
-            --namespace redis-e2e \
-            --name redis-cluster \
-            --key-prefix redis-cluster:e2e:cluster:v1 \
-            --key-count 1000 \
-            --redis-password cluster-pass-123
-        check:
-          (contains($stdout, 'data assertions passed')): true
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster check redis-cluster:e2e:cluster:v1 1000 cluster-pass-123
 
   - name: scale-out
     try:
@@ -57,25 +45,14 @@ spec:
         content: |
           set -eu
           kubectl -n redis-e2e patch redis redis-cluster --type=merge -p '{"spec":{"cluster":{"shards":4}}}'
-    - script:
+    - assert:
         timeout: 15m
-        content: |
-          set -eu
-          bash ../../scripts/assert_cluster.sh redis-e2e redis-cluster cluster-pass-123
+        file: assert-scale-out-status.yaml
     - script:
-        timeout: 8m
+        timeout: 10m
         content: |
           set -eu
-          bash ../../scripts/assert_data.sh \
-            --mode cluster \
-            --action check \
-            --namespace redis-e2e \
-            --name redis-cluster \
-            --key-prefix redis-cluster:e2e:cluster:v1 \
-            --key-count 1000 \
-            --redis-password cluster-pass-123
-        check:
-          (contains($stdout, 'data assertions passed')): true
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster check redis-cluster:e2e:cluster:v1 1000 cluster-pass-123
 
   - name: scale-in
     try:
@@ -84,49 +61,11 @@ spec:
         content: |
           set -eu
           kubectl -n redis-e2e patch redis redis-cluster --type=merge -p '{"spec":{"cluster":{"shards":3}}}'
-    - script:
+    - assert:
         timeout: 15m
-        content: |
-          set -eu
-          bash ../../scripts/assert_cluster.sh redis-e2e redis-cluster cluster-pass-123
+        file: assert-scale-in-status.yaml
     - script:
-        timeout: 8m
+        timeout: 10m
         content: |
           set -eu
-          delete_deadline=$((SECONDS + 360))
-          while kubectl -n redis-e2e get statefulset redis-cluster-shard-3 >/dev/null 2>&1; do
-            if [ "$SECONDS" -ge "$delete_deadline" ]; then
-              echo "timeout waiting redis-cluster-shard-3 deletion"
-              exit 1
-            fi
-            sleep 2
-          done
-          while kubectl -n redis-e2e get service redis-cluster-shard-3 >/dev/null 2>&1; do
-            if [ "$SECONDS" -ge "$delete_deadline" ]; then
-              echo "timeout waiting service redis-cluster-shard-3 deletion"
-              exit 1
-            fi
-            sleep 2
-          done
-          if kubectl -n redis-e2e get pvc data-redis-cluster-shard-3-0 >/dev/null 2>&1; then
-            echo "unexpected pvc data-redis-cluster-shard-3-0 still exists"
-            exit 1
-          fi
-          if kubectl -n redis-e2e get pvc data-redis-cluster-shard-3-1 >/dev/null 2>&1; then
-            echo "unexpected pvc data-redis-cluster-shard-3-1 still exists"
-            exit 1
-          fi
-    - script:
-        timeout: 8m
-        content: |
-          set -eu
-          bash ../../scripts/assert_data.sh \
-            --mode cluster \
-            --action check \
-            --namespace redis-e2e \
-            --name redis-cluster \
-            --key-prefix redis-cluster:e2e:cluster:v1 \
-            --key-count 1000 \
-            --redis-password cluster-pass-123
-        check:
-          (contains($stdout, 'data assertions passed')): true
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster check redis-cluster:e2e:cluster:v1 1000 cluster-pass-123

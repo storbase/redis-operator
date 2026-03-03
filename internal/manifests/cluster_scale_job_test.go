@@ -13,11 +13,20 @@ func TestRenderClusterScaleJobCommandIncludesCoreActions(t *testing.T) {
 	command := RenderClusterScaleJobCommand()
 	required := []string{
 		"run_cluster add-node",
-		"run_cluster rebalance",
+		"run_cluster fix",
+		"run_rebalance",
 		"run_cluster reshard",
 		"run_cluster del-node",
 		"shard_master_id",
 		"collect_shard_replica_ids",
+		"CLUSTER MYID",
+		"export REDISCLI_AUTH",
+		"nodes don't agree about configuration",
+		"clusterdown",
+		"slots are open",
+		"no such node id",
+		"node_exists_in_cluster",
+		"ensure_cluster_ready \"$TO_SHARDS\"",
 		"cluster_state",
 		"cluster_slots_assigned",
 	}
@@ -90,5 +99,9 @@ func TestNewClusterScaleJobUsesNeverRestart(t *testing.T) {
 	}
 	if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 {
 		t.Fatalf("unexpected backoff limit")
+	}
+	container := job.Spec.Template.Spec.Containers[0]
+	if len(container.Command) != 2 || container.Command[0] != "/bin/bash" || container.Command[1] != "-c" {
+		t.Fatalf("unexpected command: %v", container.Command)
 	}
 }

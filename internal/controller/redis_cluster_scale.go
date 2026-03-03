@@ -52,10 +52,12 @@ func (r *RedisReconciler) reconcileClusterScaling(
 
 	targetShards := redis.Spec.Cluster.Shards
 	observedShards := redis.Status.Cluster.ObservedShards
-	if !clusterTopology.NeedsScaling(observedShards, targetShards) {
-		if scale.Phase != redisv1alpha1.ClusterScalePhaseIdle {
-			resetClusterScaleStatus(scale, now)
-		}
+	if isInitialClusterBootstrap(redis, scale) {
+		observedShards = targetShards
+		redis.Status.Cluster.ObservedShards = targetShards
+	}
+	scalingNeeded := clusterTopology.NeedsScaling(observedShards, targetShards)
+	if !scalingNeeded && scale.Phase == redisv1alpha1.ClusterScalePhaseIdle {
 		return false, ctrl.Result{}, nil
 	}
 
@@ -66,6 +68,10 @@ func (r *RedisReconciler) reconcileClusterScaling(
 		return true, ctrl.Result{RequeueAfter: clusterScaleTransitionRequeueAfter}, nil
 
 	case redisv1alpha1.ClusterScalePhasePending:
+		if !scalingNeeded {
+			resetClusterScaleStatus(scale, now)
+			return true, ctrl.Result{}, nil
+		}
 		scale.FromShards = observedShards
 		scale.ToShards = targetShards
 		scale.ObservedGeneration = redis.Generation
@@ -79,6 +85,10 @@ func (r *RedisReconciler) reconcileClusterScaling(
 		return true, ctrl.Result{RequeueAfter: clusterScalePrepareRequeueAfter}, nil
 
 	case redisv1alpha1.ClusterScalePhasePreparing:
+		if !scalingNeeded {
+			resetClusterScaleStatus(scale, now)
+			return true, ctrl.Result{}, nil
+		}
 		ready, reason, err := r.clusterScalePrerequisitesReady(ctx, redis, scale)
 		if err != nil {
 			r.markClusterScaleFailed(redis, err.Error(), now)
@@ -327,4 +337,14 @@ func failMessageOrDefault(message string) string {
 		return "cluster scale job failed"
 	}
 	return message
+}
+
+func isInitialClusterBootstrap(redis *redisv1alpha1.Redis, scale *redisv1alpha1.ClusterScaleStatus) bool {
+	if redis == nil || redis.Spec.Cluster == nil || scale == nil {
+		return false
+	}
+	if redis.Generation > 1 {
+		return false
+	}
+	return scale.ObservedGeneration == 0 && scale.Phase == redisv1alpha1.ClusterScalePhaseIdle
 }

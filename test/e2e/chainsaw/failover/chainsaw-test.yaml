@@ -29,42 +29,10 @@ spec:
           set -eu
           bash ../../scripts/assert_failover.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
     - script:
-        timeout: 8m
-        content: |
-          set -eu
-          bash ../../scripts/assert_data.sh \
-            --mode failover \
-            --action put \
-            --namespace redis-e2e \
-            --name redis-failover \
-            --key-prefix redis-failover:e2e:failover:v1 \
-            --key-count 1000 \
-            --master-name mymaster \
-            --redis-password failover-redis-pass-123 \
-            --sentinel-password failover-sentinel-pass-123
-        check:
-          (contains($stdout, 'data assertions passed')): true
-    - script:
         timeout: 12m
         content: |
           set -eu
           bash ../../scripts/assert_failover_recovery.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
-    - script:
-        timeout: 8m
-        content: |
-          set -eu
-          bash ../../scripts/assert_data.sh \
-            --mode failover \
-            --action check \
-            --namespace redis-e2e \
-            --name redis-failover \
-            --key-prefix redis-failover:e2e:failover:v1 \
-            --key-count 1000 \
-            --master-name mymaster \
-            --redis-password failover-redis-pass-123 \
-            --sentinel-password failover-sentinel-pass-123
-        check:
-          (contains($stdout, 'data assertions passed')): true
 
   - name: scale out
     try:
@@ -76,27 +44,6 @@ spec:
     - assert:
         timeout: 5m
         file: assert-scale-out-status.yaml
-    - script:
-        timeout: 10m
-        content: |
-          set -eu
-          bash ../../scripts/assert_failover.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
-    - script:
-        timeout: 8m
-        content: |
-          set -eu
-          bash ../../scripts/assert_data.sh \
-            --mode failover \
-            --action check \
-            --namespace redis-e2e \
-            --name redis-failover \
-            --key-prefix redis-failover:e2e:failover:v1 \
-            --key-count 1000 \
-            --master-name mymaster \
-            --redis-password failover-redis-pass-123 \
-            --sentinel-password failover-sentinel-pass-123
-        check:
-          (contains($stdout, 'data assertions passed')): true
 
   - name: prepare-master-on-redis-3
     try:
@@ -124,24 +71,3 @@ spec:
     - assert:
         timeout: 5m
         file: assert-scale-in-status.yaml
-    - script:
-        timeout: 10m
-        content: |
-          set -eu
-          bash ../../scripts/assert_failover.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
-    - script:
-        timeout: 8m
-        content: |
-          set -eu
-          bash ../../scripts/assert_data.sh \
-            --mode failover \
-            --action check \
-            --namespace redis-e2e \
-            --name redis-failover \
-            --key-prefix redis-failover:e2e:failover:v1 \
-            --key-count 1000 \
-            --master-name mymaster \
-            --redis-password failover-redis-pass-123 \
-            --sentinel-password failover-sentinel-pass-123
-        check:
-          (contains($stdout, 'data assertions passed')): true

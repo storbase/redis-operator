@@ -303,11 +303,16 @@ compute_pause_duration_ms() {
   local down_after
   down_after="$(sentinel_master_field "down-after-milliseconds")"
   if ! [[ "$down_after" =~ ^[0-9]+$ ]]; then
-    down_after=30000
+    down_after=5000
   fi
-  local pause_ms=$((down_after + 15000))
-  if [ "$pause_ms" -lt 45000 ]; then
-    pause_ms=45000
+  local failover_timeout
+  failover_timeout="$(sentinel_master_field "failover-timeout")"
+  if ! [[ "$failover_timeout" =~ ^[0-9]+$ ]]; then
+    failover_timeout=60000
+  fi
+  local pause_ms=$((down_after + failover_timeout + 30000))
+  if [ "$pause_ms" -lt 120000 ]; then
+    pause_ms=120000
   fi
   echo "$pause_ms"
 }
@@ -324,6 +329,26 @@ inject_master_pause() {
     echo "failed to inject CLIENT PAUSE on ${pod}: output=${out:-<empty>}"
     return 1
   fi
+}
+
+wait_for_master_marked_down() {
+  local timeout="$1"
+  local start=$SECONDS
+  local last_flags=""
+  while true; do
+    local flags
+    flags="$(sentinel_master_field "flags")"
+    last_flags="$flags"
+    if echo "$flags" | grep -Eq 's_down|o_down'; then
+      echo "sentinel marked master down: flags=${flags}"
+      return 0
+    fi
+    if [ $((SECONDS - start)) -ge "$timeout" ]; then
+      echo "timeout waiting sentinel to mark master down: last_flags=${last_flags:-<empty>}"
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 assert_final_topology_roles() {
@@ -369,10 +394,11 @@ old_master_pod="$(detect_actual_master_with_retry 180)"
 pause_duration_ms="$(compute_pause_duration_ms)"
 echo "pausing current master via CLIENT PAUSE: pod=${old_master_pod} duration_ms=${pause_duration_ms}"
 inject_master_pause "$old_master_pod" "$pause_duration_ms"
+wait_for_master_marked_down 180
 
 new_master_pod=""
 last_detected_master=""
-deadline=$((SECONDS + 360))
+deadline=$((SECONDS + 420))
 while true; do
   candidate_master="$(detect_actual_master_once || true)"
   last_detected_master="$candidate_master"

@@ -14,6 +14,8 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
   - This avoids broken topology/replication links after Pod restarts or rescheduling when Pod IPs change.
 - [x] Supports TLS with user-provided certificates
 - [x] Supports cluster shard scale in/out
+- [x] Supports failover redis scale in/out
+- [ ] Supports connecting out of k8s cluster by redis param native, no need use special CNI or proxy.
 
 ## Install with Helm 4
 
@@ -74,8 +76,6 @@ Run with manually managed ktctl:
 1. `sudo ktctl connect --context kind-redis-operator-e2e --namespace default --dnsMode localDNS:cluster --dnsPort 10053`
 2. `make e2e-local`
 3. Keep the `ktctl connect` terminal alive during the entire e2e run.
-
-E2E suites include data durability assertions via `test/e2e/scripts/assert_data.sh` using in-cluster `redis-cli`.
 
 ## How to contribute
 

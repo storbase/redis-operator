@@ -157,6 +157,15 @@ func TestIgnorableClusterErrors(t *testing.T) {
 	if !isIgnorableReplicateError(assertionErr("ERR I can only replicate a master, not a replica.")) {
 		t.Fatalf("expected replicate error to be ignorable")
 	}
+	if !isRetryableReplicateError(assertionErr("ERR Unknown node 1234567890abcdef")) {
+		t.Fatalf("expected unknown node replicate error to be retryable")
+	}
+	if !isRetryableReplicateError(assertionErr("ERR No such master with that ID")) {
+		t.Fatalf("expected no such master replicate error to be retryable")
+	}
+	if isRetryableReplicateError(assertionErr("WRONGPASS invalid username-password pair")) {
+		t.Fatalf("expected auth error not to be retryable")
+	}
 }
 
 func TestPickMeetHost(t *testing.T) {

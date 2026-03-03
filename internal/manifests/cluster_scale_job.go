@@ -56,7 +56,7 @@ func NewClusterScaleJob(redis *redisv1alpha1.Redis, opts ClusterScaleJobOptions)
 		Name:            "cluster-scale",
 		Image:           imageOrDefault(redis.Spec.Image, DefaultRedisImage),
 		ImagePullPolicy: pullPolicyOrDefault(redis.Spec.ImagePullPolicy),
-		Command:         []string{"/bin/sh", "-c"},
+		Command:         []string{"/bin/bash", "-c"},
 		Args:            []string{command},
 		Env:             env,
 	}
@@ -107,53 +107,140 @@ tls_args=()
 if [ -f /etc/redis-tls/ca.crt ]; then
   tls_args=(--tls --cacert /etc/redis-tls/ca.crt)
 fi
-auth_args=()
 if [ -n "${REDIS_PASSWORD:-}" ]; then
-  auth_args=(-a "${REDIS_PASSWORD}")
+  export REDISCLI_AUTH="${REDIS_PASSWORD}"
 fi
 
 run_cluster() {
   local output
-  if ! output="$(redis-cli "${tls_args[@]}" "${auth_args[@]}" --cluster "$@" 2>&1)"; then
-    if echo "$output" | grep -Eiq 'already|exists|not found|unknown node|duplicate'; then
+  local rc
+  local attempt=1
+  local max_attempts=30
+  while true; do
+    set +e
+    output="$(redis-cli "${tls_args[@]}" --cluster "$@" 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+      if echo "$output" | grep -Eiq "please fix your cluster problems before rebalancing|slots are open|migrating state|importing state"; then
+        if [ "$attempt" -lt "$max_attempts" ]; then
+          attempt=$((attempt + 1))
+          sleep 2
+          continue
+        fi
+        echo "$output" >&2
+        return 1
+      fi
       echo "$output"
       return 0
     fi
+    if echo "$output" | grep -Eiq 'already|exists|not found|unknown node|no such node id|duplicate'; then
+      echo "$output"
+      return 0
+    fi
+    if echo "$output" | grep -Eiq "nodes don't agree about configuration|cluster state is not ok|clusterdown|the cluster is down|clustermanagermoveslot|please fix your cluster problems before rebalancing|slots are open|migrating state|importing state"; then
+      if [ "$attempt" -lt "$max_attempts" ]; then
+        attempt=$((attempt + 1))
+        sleep 2
+        continue
+      fi
+    fi
     echo "$output" >&2
     return 1
-  fi
-  echo "$output"
-  return 0
+  done
+}
+
+run_rebalance() {
+  local output
+  local rc
+  local attempt=1
+  local max_attempts=30
+  while true; do
+    set +e
+    output="$(redis-cli "${tls_args[@]}" --cluster rebalance "$@" 2>&1)"
+    rc=$?
+    set -e
+
+    if [ "$rc" -eq 0 ] && ! echo "$output" | grep -Eiq "please fix your cluster problems before rebalancing|slots are open|migrating state|importing state|nodes don't agree about configuration|cluster state is not ok|clusterdown|the cluster is down"; then
+      echo "$output"
+      return 0
+    fi
+
+    if echo "$output" | grep -Eiq "please fix your cluster problems before rebalancing|slots are open|migrating state|importing state|nodes don't agree about configuration|cluster state is not ok|clusterdown|the cluster is down"; then
+      if [ "$attempt" -lt "$max_attempts" ]; then
+        run_cluster fix "$1" --cluster-yes || true
+        attempt=$((attempt + 1))
+        sleep 3
+        continue
+      fi
+    fi
+
+    echo "$output" >&2
+    return 1
+  done
 }
 
 run_cmd() {
   local host="$1"
   shift
-  redis-cli "${tls_args[@]}" "${auth_args[@]}" -h "$host" -p 6379 "$@"
+  redis-cli "${tls_args[@]}" -h "$host" -p 6379 "$@"
 }
 
 cluster_nodes() {
   run_cmd "$coordinator_host" CLUSTER NODES
 }
 
+node_exists_in_cluster() {
+  local node_id="$1"
+  cluster_nodes | awk -v id="$node_id" '$1 == id {found = 1} END {exit found ? 0 : 1}'
+}
+
+shard_host() {
+  local shard_idx="$1"
+  local ordinal="$2"
+  echo "${REDIS_NAME}-shard-${shard_idx}-${ordinal}.${REDIS_NAME}-shard-${shard_idx}.${REDIS_NAMESPACE}.svc.${CLUSTER_DOMAIN}"
+}
+
 node_id_by_host() {
   local host="$1"
-  cluster_nodes | awk -v host="$host" '$2 ~ ("^"host":6379@") {print $1; exit}'
+  run_cmd "$host" CLUSTER MYID | awk 'NR == 1 {gsub(/\r/, "", $1); print $1; exit}'
+}
+
+node_flags_by_host() {
+  local host="$1"
+  run_cmd "$host" CLUSTER NODES | awk '$3 ~ /myself/ {gsub(/\r/, "", $3); print $3; exit}'
 }
 
 shard_master_id() {
   local shard_idx="$1"
-  cluster_nodes | awk -v prefix="${REDIS_NAME}-shard-${shard_idx}-" '
-    $2 ~ ("^"prefix) && $3 ~ /master/ && $3 !~ /fail/ {print $1; exit}
-  '
+  local ordinal host flags node_id
+  for ordinal in $(seq 0 "$REPLICAS_PER_SHARD"); do
+    host="$(shard_host "$shard_idx" "$ordinal")"
+    flags="$(node_flags_by_host "$host" || true)"
+    if [ -z "$flags" ]; then
+      continue
+    fi
+    if echo "$flags" | grep -Eq 'master' && ! echo "$flags" | grep -Eq 'fail'; then
+      node_id="$(node_id_by_host "$host" || true)"
+      if [ -n "$node_id" ]; then
+        echo "$node_id"
+        return 0
+      fi
+    fi
+  done
 }
 
 collect_shard_replica_ids() {
   local shard_idx="$1"
   local master_id="$2"
-  cluster_nodes | awk -v prefix="${REDIS_NAME}-shard-${shard_idx}-" -v master="$master_id" '
-    $2 ~ ("^"prefix) && $1 != master {print $1}
-  '
+  local ordinal host node_id
+  for ordinal in $(seq 0 "$REPLICAS_PER_SHARD"); do
+    host="$(shard_host "$shard_idx" "$ordinal")"
+    node_id="$(node_id_by_host "$host" || true)"
+    if [ -n "$node_id" ] && [ "$node_id" != "$master_id" ]; then
+      echo "$node_id"
+    fi
+  done
 }
 
 slot_count_by_node_id() {
@@ -182,6 +269,21 @@ collect_master_ids() {
 cluster_info_field() {
   local key="$1"
   run_cmd "$coordinator_host" CLUSTER INFO | awk -F: -v key="$key" '$1 == key {gsub(/\r/, "", $2); print $2}'
+}
+
+ensure_node_visible() {
+  local node_id="$1"
+  local deadline=$((SECONDS + 180))
+  while true; do
+    if cluster_nodes | awk -v id="$node_id" '$1 == id {found = 1} END {exit found ? 0 : 1}'; then
+      return 0
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "node ${node_id} not visible from coordinator within timeout" >&2
+      exit 1
+    fi
+    sleep 2
+  done
 }
 
 ensure_cluster_ready() {
@@ -222,6 +324,8 @@ if [ "$TO_SHARDS" -gt "$FROM_SHARDS" ]; then
     exit 1
   fi
 
+  ensure_node_visible "$new_master_id"
+
   if [ "$REPLICAS_PER_SHARD" -gt 0 ]; then
     for ordinal in $(seq 1 "$REPLICAS_PER_SHARD"); do
       replica_host="${REDIS_NAME}-shard-${new_idx}-${ordinal}.${REDIS_NAME}-shard-${new_idx}.${REDIS_NAMESPACE}.svc.${CLUSTER_DOMAIN}"
@@ -230,7 +334,8 @@ if [ "$TO_SHARDS" -gt "$FROM_SHARDS" ]; then
     done
   fi
 
-  run_cluster rebalance "$coordinator_addr" --cluster-use-empty-masters --cluster-yes
+  run_cluster fix "$coordinator_addr" --cluster-yes
+  run_rebalance "$coordinator_addr" --cluster-use-empty-masters --cluster-yes
 fi
 
 if [ "$TO_SHARDS" -lt "$FROM_SHARDS" ]; then
@@ -269,18 +374,18 @@ if [ "$TO_SHARDS" -lt "$FROM_SHARDS" ]; then
 
     mapfile -t replica_ids < <(collect_shard_replica_ids "$remove_idx" "$source_master_id" || true)
     for replica_id in "${replica_ids[@]}"; do
-      if [ -n "$replica_id" ]; then
+      if [ -n "$replica_id" ] && node_exists_in_cluster "$replica_id"; then
         run_cluster del-node "$coordinator_addr" "$replica_id" --cluster-yes
       fi
     done
 
     source_master_id="$(shard_master_id "$remove_idx" || true)"
-    if [ -n "$source_master_id" ]; then
+    if [ -n "$source_master_id" ] && node_exists_in_cluster "$source_master_id"; then
       run_cluster del-node "$coordinator_addr" "$source_master_id" --cluster-yes
     fi
   fi
 
-  run_cluster rebalance "$coordinator_addr" --cluster-yes
+  run_rebalance "$coordinator_addr" --cluster-yes
 fi
 
 ensure_cluster_ready "$TO_SHARDS"

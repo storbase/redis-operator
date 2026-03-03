@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	redisv1alpha1 "github.com/storbase/redis-operator/api/v1alpha1"
 	appinterfaces "github.com/storbase/redis-operator/internal/interfaces"
 )
@@ -15,6 +17,11 @@ type slotRange struct {
 	Start int
 	End   int
 }
+
+const (
+	clusterReplicateRetryTimeout  = 45 * time.Second
+	clusterReplicateRetryInterval = 500 * time.Millisecond
+)
 
 type clusterTopology struct {
 	Masters         []string
@@ -315,15 +322,35 @@ func (c *AdminClient) bootstrapReplicas(ctx context.Context, masters []string, r
 			return fmt.Errorf("master id missing for %s", masterAddr)
 		}
 		cli := c.newRedisClient(replicaAddr, password, tlsConfig)
-		commandCtx, cancel := c.commandContext(ctx)
-		err := cli.Do(commandCtx, "CLUSTER", "REPLICATE", masterID).Err()
-		cancel()
+		err := c.replicateWithRetry(ctx, cli, masterID)
 		_ = cli.Close()
 		if err != nil && !isIgnorableReplicateError(err) {
 			return fmt.Errorf("cluster replicate %s -> %s failed: %w", replicaAddr, masterAddr, err)
 		}
 	}
 	return nil
+}
+
+func (c *AdminClient) replicateWithRetry(ctx context.Context, cli *redis.Client, masterID string) error {
+	deadline := time.Now().Add(clusterReplicateRetryTimeout)
+	for {
+		commandCtx, cancel := c.commandContext(ctx)
+		err := cli.Do(commandCtx, "CLUSTER", "REPLICATE", masterID).Err()
+		cancel()
+		if err == nil || isIgnorableReplicateError(err) {
+			return nil
+		}
+		if !isRetryableReplicateError(err) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		time.Sleep(clusterReplicateRetryInterval)
+	}
 }
 
 func isIgnorableMeetError(err error) bool {
@@ -348,4 +375,14 @@ func isIgnorableReplicateError(err error) bool {
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "already") || strings.Contains(message, "replicate a master")
+}
+
+func isRetryableReplicateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unknown node") ||
+		strings.Contains(message, "no such master with that id") ||
+		strings.Contains(message, "try again")
 }
