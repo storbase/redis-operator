@@ -8,6 +8,7 @@ chainsaw_dir="${E2E_CHAINSAW_DIR:?E2E_CHAINSAW_DIR is required}"
 chainsaw_config="${E2E_CHAINSAW_CONFIG:?E2E_CHAINSAW_CONFIG is required}"
 chainsaw_suites="${E2E_CHAINSAW_SUITES:-cluster,failover}"
 chainsaw_skip_delete="${E2E_CHAINSAW_SKIP_DELETE:-true}"
+chainsaw_report_name="${E2E_CHAINSAW_REPORT_NAME:-chainsaw-pr}"
 image="${E2E_IMG:?E2E_IMG is required}"
 kubectl_bin="${KUBECTL_BIN:?KUBECTL_BIN is required}"
 container_tool="${CONTAINER_TOOL_BIN:?CONTAINER_TOOL_BIN is required}"
@@ -52,9 +53,12 @@ fi
 "$container_tool" build -t "$image" .
 kind load docker-image "$image" --name "$cluster_name"
 
+"$kubectl_bin" apply -f charts/redis-operator/crds
+
 "$helm_bin" upgrade --install "$helm_release" charts/redis-operator \
   --namespace "$operator_namespace" \
   --create-namespace \
+  --reset-values \
   --set-string image.repository="$image_repository" \
   --set-string image.tag="$image_tag" \
   --wait \
@@ -73,7 +77,7 @@ chainsaw_cmd=(
   "${chainsaw_suite_dirs[@]}"
   --kube-context "kind-${cluster_name}"
   --report-format JUNIT-TEST
-  --report-name chainsaw-pr
+  --report-name "$chainsaw_report_name"
   --report-path "$artifact_dir"
 )
 if [ "$chainsaw_skip_delete" = "true" ]; then

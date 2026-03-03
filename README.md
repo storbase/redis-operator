@@ -68,14 +68,14 @@ Prerequisites:
 - kind
 - kubectl
 - chainsaw
-- ktctl
+- helm
 - openssl
 
-Run with manually managed ktctl:
+Run local e2e with helm-installed operator:
 
-1. `sudo ktctl connect --context kind-redis-operator-e2e --namespace default --dnsMode localDNS:cluster --dnsPort 10053`
-2. `make e2e-local`
-3. Keep the `ktctl connect` terminal alive during the entire e2e run.
+1. `make e2e-local`
+2. The workflow always builds the current controller image, reapplies chart CRDs, and runs `helm upgrade --install`.
+3. If an existing kind cluster is older than Kubernetes 1.29, it is recreated automatically before running tests.
 
 ## How to contribute
 
