@@ -87,6 +87,9 @@ func IsReservedRedisDirective(tokens []string) bool {
 	if strings.HasPrefix(key, "cluster-announce-") {
 		return true
 	}
+	if strings.HasPrefix(key, "replica-announce-") {
+		return true
+	}
 	if strings.HasPrefix(key, "tls-") {
 		return true
 	}
@@ -116,7 +119,7 @@ func IsReservedSentinelDirective(tokens []string) bool {
 	}
 	secondary := strings.ToLower(tokens[1])
 	switch secondary {
-	case "monitor", "auth-pass", "resolve-hostnames", "announce-hostnames":
+	case "monitor", "auth-pass", "resolve-hostnames", "announce-hostnames", "announce-ip", "announce-port":
 		return true
 	default:
 		return false

@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"fmt"
-	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -12,15 +11,15 @@ import (
 )
 
 // BuildDesiredState renders Kubernetes objects for Cluster mode.
-func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, string, error) {
+func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alpha1.EndpointStatus, error) {
 	if redis.Spec.Cluster == nil {
-		return nil, "", fmt.Errorf("spec.cluster must be set when mode is Cluster")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.cluster must be set when mode is Cluster")
 	}
 	if redis.Spec.Failover != nil {
-		return nil, "", fmt.Errorf("spec.failover must not be set when mode is Cluster")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.failover must not be set when mode is Cluster")
 	}
 	if len(cfg.NormalizeUserLines(redis.Spec.SentinelConfig)) > 0 {
-		return nil, "", fmt.Errorf("spec.sentinelConfig is only valid in Failover mode")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.sentinelConfig is only valid in Failover mode")
 	}
 
 	userRedisConfig := cfg.NormalizeUserLines(redis.Spec.RedisConfig)
@@ -36,7 +35,7 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, string, err
 	})
 
 	objects := []client.Object{redisCM}
-	seeds := make([]string, 0, redis.Spec.Cluster.Shards)
+	internalRedisEndpoints := make([]redisv1alpha1.ExternalAddress, 0, redis.Spec.Cluster.Shards)
 
 	for i := int32(0); i < redis.Spec.Cluster.Shards; i++ {
 		shardName := fmt.Sprintf("%s-shard-%d", redis.Name, i)
@@ -62,8 +61,14 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, string, err
 			TLSSecretName: tlsSecretName,
 		})
 		objects = append(objects, redisSTS)
-		seeds = append(seeds, fmt.Sprintf("%s-0.%s.%s.svc:6379", shardName, shardName, redis.Namespace))
+		internalRedisEndpoints = append(internalRedisEndpoints, redisv1alpha1.ExternalAddress{
+			Host: fmt.Sprintf("%s-0.%s.%s.svc.cluster.local", shardName, shardName, redis.Namespace),
+			Port: 6379,
+		})
 	}
 
-	return objects, strings.Join(seeds, ","), nil
+	endpoints := redisv1alpha1.EndpointStatus{
+		Internal: internalRedisEndpoints,
+	}
+	return objects, endpoints, nil
 }

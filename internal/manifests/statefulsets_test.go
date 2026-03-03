@@ -80,6 +80,41 @@ func TestNewSentinelStatefulSetWithTLS(t *testing.T) {
 	}
 }
 
+func TestNewSentinelStatefulSetIncludesAnnounceConfig(t *testing.T) {
+	sts := NewSentinelStatefulSet(SentinelStatefulSetOptions{
+		Name:          "sample-sentinel",
+		Namespace:     "default",
+		ServiceName:   "sample-sentinel",
+		Labels:        map[string]string{"app": "sentinel"},
+		Replicas:      3,
+		MasterName:    "mymaster",
+		ConfigMapName: "sample-sentinel-config",
+		ExternalEndpoints: []redisv1alpha1.ExternalNodeAddress{
+			{Ordinal: 0, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32079}},
+			{Ordinal: 1, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32080}},
+		},
+	})
+
+	sentinelContainer := mustFindContainer(t, sts.Spec.Template.Spec.Containers, "sentinel")
+	if len(sentinelContainer.Args) == 0 {
+		t.Fatalf("expected sentinel command args to be set")
+	}
+	command := sentinelContainer.Args[0]
+	required := []string{
+		`announce_ip=""`,
+		`case "${ordinal}" in`,
+		`announce_ip="10.0.0.10"`,
+		`announce_port="32079"`,
+		`echo "sentinel announce-ip ${announce_ip}" >> /tmp/sentinel.conf`,
+		`echo "sentinel announce-port ${announce_port}" >> /tmp/sentinel.conf`,
+	}
+	for _, item := range required {
+		if !strings.Contains(command, item) {
+			t.Fatalf("expected sentinel command to contain %q", item)
+		}
+	}
+}
+
 func mustFindContainer(t *testing.T, containers []corev1.Container, name string) corev1.Container {
 	t.Helper()
 	for _, container := range containers {

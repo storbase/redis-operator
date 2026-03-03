@@ -97,7 +97,7 @@ func TestBuildFailoverRedisAddresses(t *testing.T) {
 func TestNormalizeFailoverMasterAddress(t *testing.T) {
 	redisAddrs := buildFailoverRedisAddresses("redis-e2e", "sample", 3)
 
-	got, err := normalizeFailoverMasterAddress("sample-redis-2:6379", redisAddrs)
+	got, err := normalizeFailoverMasterAddress("sample-redis-2:6379", redisAddrs, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,8 +110,30 @@ func TestNormalizeFailoverMasterAddress(t *testing.T) {
 func TestNormalizeFailoverMasterAddressRejectsIP(t *testing.T) {
 	redisAddrs := buildFailoverRedisAddresses("redis-e2e", "sample", 3)
 
-	if _, err := normalizeFailoverMasterAddress("10.0.0.9:6379", redisAddrs); err == nil {
+	if _, err := normalizeFailoverMasterAddress("10.0.0.9:6379", redisAddrs, nil); err == nil {
 		t.Fatalf("expected ip-like master host to be rejected")
+	}
+}
+
+func TestNormalizeFailoverMasterAddressAcceptsConfiguredExternalIP(t *testing.T) {
+	redisAddrs := buildFailoverRedisAddresses("redis-e2e", "sample", 3)
+	external := []redisv1alpha1.ExternalNodeAddress{
+		{
+			Ordinal: 2,
+			ExternalAddress: redisv1alpha1.ExternalAddress{
+				Host: "10.0.0.10",
+				Port: 32102,
+			},
+		},
+	}
+
+	got, err := normalizeFailoverMasterAddress("10.0.0.10:32102", redisAddrs, external)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "sample-redis-2.sample-redis-headless.redis-e2e.svc.cluster.local:6379"
+	if got != want {
+		t.Fatalf("unexpected normalized master address, got %q want %q", got, want)
 	}
 }
 

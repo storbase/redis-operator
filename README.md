@@ -15,7 +15,8 @@ A Kubernetes operator that deploys Redis in one CRD with two modes:
 - [x] Supports TLS with user-provided certificates
 - [x] Supports cluster shard scale in/out
 - [x] Supports failover redis scale in/out
-- [ ] Supports connecting out of k8s cluster by redis param native, no need use special CNI or proxy.
+- [x] Supports failover external access with NodePort and Sentinel native discovery
+- [ ] Supports cluster external access with native announce settings (planned)
 
 ## Install with Helm 4
 
@@ -69,13 +70,29 @@ Prerequisites:
 - kubectl
 - chainsaw
 - helm
+- go
 - openssl
+- ktctl (run in a separate terminal with local DNS mode)
 
 Run local e2e with helm-installed operator:
 
 1. `make e2e-local`
-2. The workflow always builds the current controller image, reapplies chart CRDs, and runs `helm upgrade --install`.
-3. If an existing kind cluster is older than Kubernetes 1.29, it is recreated automatically before running tests.
+2. Keep `ktctl connect` running (for example: `sudo ktctl connect --context kind-redis-operator-e2e --namespace default --dnsMode localDNS`).
+3. The workflow reapplies chart CRDs, installs the Helm chart with `replicaCount=0`, and runs the controller locally via `go run ./cmd/main.go`.
+4. If an existing kind cluster is older than Kubernetes 1.29, it is recreated automatically before running tests.
+5. Run one suite only when needed, for example:
+   - `E2E_CHAINSAW_SUITES=failover make e2e-local`
+   - `E2E_CHAINSAW_SUITES=failover-external make e2e-local`
+
+## Failover external access (NodePort)
+
+Configure external per-pod endpoints with `spec.externalAccess.failover`.
+The operator will:
+
+- create per-pod NodePort Services for Redis and Sentinel;
+- write Redis/Sentinel announce directives with those external endpoints;
+- keep internal runtime reconciliation on stable in-cluster hostnames;
+- publish user-facing internal and external endpoints in `.status.endpoints`.
 
 ## How to contribute
 

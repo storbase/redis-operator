@@ -31,6 +31,16 @@ const (
 	RedisModeFailover RedisMode = "Failover"
 )
 
+// ExternalAccessType declares how services are exposed out of cluster.
+type ExternalAccessType string
+
+const (
+	// ExternalAccessTypeNodePort exposes per-pod services with NodePort.
+	ExternalAccessTypeNodePort ExternalAccessType = "NodePort"
+	// ExternalAccessTypeLoadBalancer is reserved for future implementation.
+	ExternalAccessTypeLoadBalancer ExternalAccessType = "LoadBalancer"
+)
+
 const (
 	// RedisConditionHealth reports whether the Redis resource is healthy.
 	RedisConditionHealth = "Health"
@@ -161,6 +171,49 @@ type FailoverSpec struct {
 	SentinelPod PodPolicy   `json:"sentinelPod,omitempty"`
 }
 
+// ExternalAddress represents one host:port endpoint.
+type ExternalAddress struct {
+	// +kubebuilder:validation:MinLength=1
+	Host string `json:"host"`
+
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+}
+
+// ExternalNodeAddress represents one endpoint mapped to a StatefulSet ordinal.
+type ExternalNodeAddress struct {
+	// +kubebuilder:validation:Minimum=0
+	Ordinal int32 `json:"ordinal"`
+
+	ExternalAddress `json:",inline"`
+}
+
+// FailoverExternalAccessNodeSet stores per-pod external endpoints.
+type FailoverExternalAccessNodeSet struct {
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	Nodes []ExternalNodeAddress `json:"nodes"`
+}
+
+// FailoverExternalAccessSpec configures failover external exposure.
+type FailoverExternalAccessSpec struct {
+	// +kubebuilder:validation:Enum=NodePort;LoadBalancer
+	Type ExternalAccessType `json:"type"`
+
+	Sentinel FailoverExternalAccessNodeSet `json:"sentinel"`
+	Redis    FailoverExternalAccessNodeSet `json:"redis"`
+}
+
+// ClusterExternalAccessSpec is reserved for future cluster external exposure.
+type ClusterExternalAccessSpec struct{}
+
+// ExternalAccessSpec configures external service exposure.
+type ExternalAccessSpec struct {
+	Failover *FailoverExternalAccessSpec `json:"failover,omitempty"`
+	Cluster  *ClusterExternalAccessSpec  `json:"cluster,omitempty"`
+}
+
 // ExporterSpec configures optional redis_exporter sidecar.
 type ExporterSpec struct {
 	// Enabled controls whether exporter sidecar is injected.
@@ -208,15 +261,23 @@ type RedisSpec struct {
 	Cluster  *ClusterSpec  `json:"cluster,omitempty"`
 	Failover *FailoverSpec `json:"failover,omitempty"`
 
+	ExternalAccess *ExternalAccessSpec `json:"externalAccess,omitempty"`
+
 	Exporter ExporterSpec `json:"exporter,omitempty"`
+}
+
+// EndpointStatus stores user-facing internal and external endpoints.
+type EndpointStatus struct {
+	Internal []ExternalAddress `json:"internal,omitempty"`
+	External []ExternalAddress `json:"external,omitempty"`
 }
 
 // RedisStatus defines the observed state of Redis.
 type RedisStatus struct {
-	Endpoint string               `json:"endpoint,omitempty"`
-	Health   bool                 `json:"health,omitempty"`
-	Reason   RedisHealthReason    `json:"reason,omitempty"`
-	Cluster  ClusterRuntimeStatus `json:"cluster,omitempty"`
+	Endpoints EndpointStatus       `json:"endpoints,omitempty"`
+	Health    bool                 `json:"health,omitempty"`
+	Reason    RedisHealthReason    `json:"reason,omitempty"`
+	Cluster   ClusterRuntimeStatus `json:"cluster,omitempty"`
 	// ClusterScale tracks shard scale operation status in Cluster mode.
 	ClusterScale ClusterScaleStatus `json:"clusterScale,omitempty"`
 
@@ -237,11 +298,14 @@ type RedisStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=redis,scope=Namespaced,shortName=rds
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
-// +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.status.endpoint`
+// +kubebuilder:printcolumn:name="InternalEndpoint",type=string,JSONPath=`.status.endpoints.internal[0].host`
 // +kubebuilder:printcolumn:name="Health",type=boolean,JSONPath=`.status.health`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
 // +kubebuilder:validation:XValidation:rule="(self.spec.mode == 'Cluster' && has(self.spec.cluster) && !has(self.spec.failover)) || (self.spec.mode == 'Failover' && has(self.spec.failover) && !has(self.spec.cluster))",message="mode and sub-spec must match exactly one"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.sentinelConfig) || size(self.spec.sentinelConfig) == 0",message="sentinelConfig is only allowed in Failover mode"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover)",message="externalAccess.failover is only allowed in Failover mode"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)",message="externalAccess.cluster is reserved and not implemented in this release"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover) || self.spec.externalAccess.failover.type == 'NodePort'",message="externalAccess.failover.type must be NodePort in this release"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.failover) || self.spec.failover.quorum <= self.spec.failover.sentinelReplicas",message="failover.quorum must be <= failover.sentinelReplicas"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == oldSelf.spec.mode",message="mode is immutable"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec.cluster) || !has(self.spec.cluster) || self.spec.cluster.shards == oldSelf.spec.cluster.shards || self.spec.cluster.shards == oldSelf.spec.cluster.shards + 1 || self.spec.cluster.shards == oldSelf.spec.cluster.shards - 1",message="cluster.shards can only change by 1 per update"

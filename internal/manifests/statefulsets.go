@@ -1,6 +1,9 @@
 package manifests
 
 import (
+	"fmt"
+	"strings"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -38,6 +41,7 @@ type SentinelStatefulSetOptions struct {
 	Image               string
 	ImagePullPolicy     corev1.PullPolicy
 	TLSSecretName       string
+	ExternalEndpoints   []redisv1alpha1.ExternalNodeAddress
 }
 
 // NewRedisStatefulSet builds a redis StatefulSet for either cluster or failover mode.
@@ -102,15 +106,7 @@ func NewSentinelStatefulSet(opts SentinelStatefulSetOptions) *appsv1.StatefulSet
 		Image:           imageOrDefault(opts.Image, DefaultRedisImage),
 		ImagePullPolicy: pullPolicyOrDefault(opts.ImagePullPolicy),
 		Command:         []string{"/bin/sh", "-c"},
-		Args: []string{`set -eu
-cp /etc/redis-template/sentinel.conf /tmp/sentinel.conf
-if [ -n "${SENTINEL_PASSWORD:-}" ]; then
-  echo "requirepass ${SENTINEL_PASSWORD}" >> /tmp/sentinel.conf
-fi
-if [ -n "${REDIS_PASSWORD:-}" ]; then
-  echo "sentinel auth-pass ${MASTER_NAME} ${REDIS_PASSWORD}" >> /tmp/sentinel.conf
-fi
-exec redis-server /tmp/sentinel.conf --sentinel`},
+		Args:            []string{renderSentinelCommand(opts.ExternalEndpoints)},
 		Ports: []corev1.ContainerPort{{
 			Name:          "sentinel",
 			ContainerPort: 26379,
@@ -281,4 +277,38 @@ func newDataPVC(storage redisv1alpha1.StorageSpec) corev1.PersistentVolumeClaim 
 
 func int32Ptr(v int32) *int32 {
 	return &v
+}
+
+func renderSentinelCommand(externalEndpoints []redisv1alpha1.ExternalNodeAddress) string {
+	var builder strings.Builder
+	builder.WriteString(`set -eu
+cp /etc/redis-template/sentinel.conf /tmp/sentinel.conf
+ordinal="${HOSTNAME##*-}"
+announce_ip=""
+announce_port=""
+`)
+	if len(externalEndpoints) > 0 {
+		builder.WriteString("case \"${ordinal}\" in\n")
+		for _, endpoint := range externalEndpoints {
+			builder.WriteString(fmt.Sprintf("%d)\n", endpoint.Ordinal))
+			builder.WriteString(fmt.Sprintf("  announce_ip=\"%s\"\n", endpoint.Host))
+			builder.WriteString(fmt.Sprintf("  announce_port=\"%d\"\n", endpoint.Port))
+			builder.WriteString("  ;;\n")
+		}
+		builder.WriteString("esac\n")
+	}
+	builder.WriteString(`if [ -n "${announce_ip}" ]; then
+  echo "sentinel announce-ip ${announce_ip}" >> /tmp/sentinel.conf
+fi
+if [ -n "${announce_port}" ]; then
+  echo "sentinel announce-port ${announce_port}" >> /tmp/sentinel.conf
+fi
+if [ -n "${SENTINEL_PASSWORD:-}" ]; then
+  echo "requirepass ${SENTINEL_PASSWORD}" >> /tmp/sentinel.conf
+fi
+if [ -n "${REDIS_PASSWORD:-}" ]; then
+  echo "sentinel auth-pass ${MASTER_NAME} ${REDIS_PASSWORD}" >> /tmp/sentinel.conf
+fi
+exec redis-server /tmp/sentinel.conf --sentinel`)
+	return builder.String()
 }

@@ -127,9 +127,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
-	if redis.Status.Endpoint != desired.Endpoint {
-		redis.Status.Endpoint = desired.Endpoint
-	}
+	redis.Status.Endpoints = desired.Endpoints
 	if err := r.setObservedReadyReplicaCounts(ctx, redis); err != nil {
 		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, err.Error())
 		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {

@@ -29,6 +29,13 @@ func TestValidateUserDirectivesRejectReservedTLSDirective(t *testing.T) {
 	}
 }
 
+func TestValidateUserDirectivesRejectReservedReplicaAnnounceDirective(t *testing.T) {
+	_, err := ValidateUserDirectives([]string{"replica-announce-port 30001"}, IsReservedRedisDirective)
+	if err == nil {
+		t.Fatalf("expected reserved replica announce directive error")
+	}
+}
+
 func TestValidateUserDirectivesAllowsMultiToken(t *testing.T) {
 	lines, err := ValidateUserDirectives([]string{"client-output-buffer-limit normal 0 0 0"}, IsReservedRedisDirective)
 	if err != nil {
@@ -43,5 +50,12 @@ func TestValidateUserSentinelDirectivesRejectReservedTLSDirective(t *testing.T) 
 	_, err := ValidateUserDirectives([]string{"tls-auth-clients no"}, IsReservedSentinelDirective)
 	if err == nil {
 		t.Fatalf("expected reserved sentinel tls directive error")
+	}
+}
+
+func TestValidateUserSentinelDirectivesRejectReservedAnnounceDirective(t *testing.T) {
+	_, err := ValidateUserDirectives([]string{"sentinel announce-ip node-1.example.com"}, IsReservedSentinelDirective)
+	if err == nil {
+		t.Fatalf("expected reserved sentinel announce directive error")
 	}
 }

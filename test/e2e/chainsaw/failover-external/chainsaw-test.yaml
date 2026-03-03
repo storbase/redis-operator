@@ -1,0 +1,55 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: redis-failover-external-nodeport
+spec:
+  steps:
+  - name: apply-and-verify-failover-steady-state
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-failover-tls \
+            redis-failover.redis-e2e.svc.cluster.local \
+            '*.redis-failover-redis-headless.redis-e2e.svc.cluster.local' \
+            '*.redis-failover-sentinel.redis-e2e.svc.cluster.local' \
+            'redis-failover-redis.redis-e2e.svc.cluster.local' \
+            'redis-failover-sentinel.redis-e2e.svc.cluster.local'
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          node_ip="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"
+          if [ -z "$node_ip" ]; then
+            echo "failed to resolve node internal ip"
+            exit 1
+          fi
+          sed "s/__NODE_IP__/${node_ip}/g" redis.yaml | kubectl apply -f -
+    - assert:
+        timeout: 10m
+        file: assert-ready.yaml
+    - script:
+        timeout: 3m
+        content: |
+          set -eu
+          deadline=$((SECONDS + 180))
+          while true; do
+            ports="$(kubectl -n redis-e2e get redis redis-failover -o jsonpath='{range .status.endpoints.external[*]}{.port}{"\n"}{end}' | sed '/^$/d' | sort -n | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+            if [ "$ports" = "32079 32080 32081" ]; then
+              echo "status.endpoints.external ports are expected: ${ports}"
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "unexpected status.endpoints.external ports: got='${ports:-<empty>}' want='32079 32080 32081'"
+              exit 1
+            fi
+            sleep 2
+          done
+    - script:
+        timeout: 12m
+        content: |
+          set -eu
+          bash ../../scripts/assert_failover_nodeport_external.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123

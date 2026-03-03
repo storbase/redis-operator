@@ -197,7 +197,7 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 
 .PHONY: e2e-check-tools
 e2e-check-tools: ## Verify required local tools for e2e workflows.
-	@for bin in $(KUBECTL) $(KIND) $(CHAINSAW) $(CONTAINER_TOOL) openssl; do \
+	@for bin in $(KUBECTL) $(KIND) $(CHAINSAW) openssl; do \
 		if ! command -v $$bin >/dev/null 2>&1; then \
 			echo "Error: $$bin is required but not found in PATH"; \
 			exit 1; \
@@ -206,24 +206,28 @@ e2e-check-tools: ## Verify required local tools for e2e workflows.
 
 .PHONY: e2e-check-tools-pr
 e2e-check-tools-pr: e2e-check-tools ## Verify extra tools required for image-based PR e2e flow.
+	@if ! command -v $(CONTAINER_TOOL) >/dev/null 2>&1; then \
+		echo "Error: $(CONTAINER_TOOL) is required for PR e2e flow"; \
+		exit 1; \
+	fi
 	@if ! command -v $(HELM) >/dev/null 2>&1; then \
 		echo "Error: $(HELM) is required for PR e2e flow"; \
 		exit 1; \
 	fi
 
 .PHONY: e2e-check-tools-local
-e2e-check-tools-local: e2e-check-tools-pr ## Verify extra tools required for local helm-based e2e flow.
+e2e-check-tools-local: e2e-check-tools ## Verify extra tools required for local helm-based e2e flow.
+	@if ! command -v go >/dev/null 2>&1; then \
+		echo "Error: go is required for local e2e flow"; \
+		exit 1; \
+	fi
+	@if ! command -v $(HELM) >/dev/null 2>&1; then \
+		echo "Error: $(HELM) is required for local e2e flow"; \
+		exit 1; \
+	fi
 
 .PHONY: e2e-kind-up
 e2e-kind-up: e2e-check-tools ## Create or reuse kind cluster used by e2e.
-	@if $(KIND) get clusters | grep -qx "$(E2E_KIND_CLUSTER)"; then \
-		current_minor="$$( $(KUBECTL) --context kind-$(E2E_KIND_CLUSTER) version -o jsonpath='{.serverVersion.minor}' 2>/dev/null || true )"; \
-		current_minor="$${current_minor%%[^0-9]*}"; \
-		if [ -z "$$current_minor" ] || [ "$$current_minor" -lt 29 ]; then \
-			echo "Existing kind cluster $(E2E_KIND_CLUSTER) runs unsupported Kubernetes minor '$${current_minor:-unknown}', recreating with $(E2E_KIND_NODE_IMAGE)."; \
-			$(KIND) delete cluster --name "$(E2E_KIND_CLUSTER)"; \
-		fi; \
-	fi
 	@if ! $(KIND) get clusters | grep -qx "$(E2E_KIND_CLUSTER)"; then \
 		$(KIND) create cluster --name "$(E2E_KIND_CLUSTER)" --image "$(E2E_KIND_NODE_IMAGE)" --config test/e2e/kind-config.yaml --wait 120s; \
 	fi
@@ -238,30 +242,32 @@ e2e-reset-namespace: ## Recreate the e2e namespace.
 e2e-local-up: e2e-kind-up e2e-check-tools-local ## Prepare kind cluster for local helm-based e2e runs.
 
 .PHONY: e2e-local
-e2e-local: e2e-local-up ## Run e2e with kind + built image + helm install/upgrade.
+e2e-local: e2e-local-up ## Run e2e with kind + helm install + local go-run controller.
 	E2E_KIND_CLUSTER=$(E2E_KIND_CLUSTER) \
 	E2E_NAMESPACE=$(E2E_NAMESPACE) \
 	E2E_HELM_RELEASE=$(E2E_HELM_RELEASE) \
 	E2E_OPERATOR_NAMESPACE=$(E2E_OPERATOR_NAMESPACE) \
 	E2E_OPERATOR_DEPLOYMENT=$(E2E_OPERATOR_DEPLOYMENT) \
-	E2E_ARTIFACT_DIR_PR=$(E2E_ARTIFACT_DIR_LOCAL) \
+	E2E_ARTIFACT_DIR_LOCAL=$(E2E_ARTIFACT_DIR_LOCAL) \
 	E2E_CHAINSAW_DIR=$(E2E_CHAINSAW_DIR) \
 	E2E_CHAINSAW_CONFIG=$(E2E_CHAINSAW_CONFIG) \
 	E2E_CHAINSAW_SUITES=$(E2E_CHAINSAW_SUITES) \
 	E2E_CHAINSAW_SKIP_DELETE=$(E2E_CHAINSAW_SKIP_DELETE) \
 	E2E_CHAINSAW_REPORT_NAME=chainsaw-local \
-	E2E_IMG=$(E2E_IMG) \
+	E2E_DNS_PREFLIGHT=$(E2E_DNS_PREFLIGHT) \
 	KUBECTL_BIN=$(KUBECTL) \
 	HELM_BIN=$(HELM) \
-	CONTAINER_TOOL_BIN=$(CONTAINER_TOOL) \
-	./hack/e2e/run-pr.sh
+	CHAINSAW_BIN=$(CHAINSAW) \
+	./hack/e2e/run-local.sh
 
 .PHONY: e2e-local-dump
 e2e-local-dump: ## Collect diagnostics for local e2e runs.
+	E2E_OPERATOR_NAMESPACE=$(E2E_OPERATOR_NAMESPACE) \
+	E2E_OPERATOR_DEPLOYMENT=$(E2E_OPERATOR_DEPLOYMENT) \
 	./hack/e2e/dump.sh $(E2E_ARTIFACT_DIR_LOCAL) $(E2E_NAMESPACE)
 
 .PHONY: e2e-local-down
-e2e-local-down: ## Stop residual legacy local e2e controller process.
+e2e-local-down: ## Stop residual local e2e controller process.
 	@if [ -f "$(E2E_ARTIFACT_DIR_LOCAL)/controller.pid" ]; then \
 		kill "$$(cat "$(E2E_ARTIFACT_DIR_LOCAL)/controller.pid")" >/dev/null 2>&1 || true; \
 	fi

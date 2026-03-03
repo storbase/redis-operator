@@ -76,8 +76,11 @@ func TestReconcileClusterCreatesShardStatefulSets(t *testing.T) {
 	if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(obj), fetched); err != nil {
 		t.Fatalf("get redis failed: %v", err)
 	}
-	if fetched.Status.Endpoint == "" {
-		t.Fatalf("expected status.endpoint to be set")
+	if len(fetched.Status.Endpoints.Internal) != 2 {
+		t.Fatalf("expected 2 internal endpoints, got %d", len(fetched.Status.Endpoints.Internal))
+	}
+	if fetched.Status.Endpoints.Internal[0].Host == "" {
+		t.Fatalf("expected first internal endpoint host to be set")
 	}
 	if admin.clusterCalls != 1 {
 		t.Fatalf("unexpected cluster bootstrap calls: got %d want 1", admin.clusterCalls)
@@ -137,9 +140,16 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(obj), fetched); err != nil {
 		t.Fatalf("get redis failed: %v", err)
 	}
-	wantEndpoint := fmt.Sprintf("%s-sentinel.default.svc:26379", name)
-	if fetched.Status.Endpoint != wantEndpoint {
-		t.Fatalf("unexpected endpoint: got %q want %q", fetched.Status.Endpoint, wantEndpoint)
+	if len(fetched.Status.Endpoints.Internal) != 3 {
+		t.Fatalf("expected 3 internal endpoints, got %d", len(fetched.Status.Endpoints.Internal))
+	}
+	wantSentinelHost := fmt.Sprintf("%s-sentinel-0.%s-sentinel.default.svc.cluster.local", name, name)
+	if fetched.Status.Endpoints.Internal[0].Host != wantSentinelHost {
+		t.Fatalf(
+			"unexpected first internal sentinel host: got %q want %q",
+			fetched.Status.Endpoints.Internal[0].Host,
+			wantSentinelHost,
+		)
 	}
 	if admin.clusterCalls != 0 {
 		t.Fatalf("unexpected cluster bootstrap calls: got %d want 0", admin.clusterCalls)
@@ -149,6 +159,93 @@ func TestReconcileFailoverCreatesTwoStatefulSets(t *testing.T) {
 	}
 	assertHealthStatus(t, fetched, true, redisv1alpha1.ReasonHealthy, metav1.ConditionTrue)
 	assertObservedReadyCounts(t, fetched, 3, 3)
+}
+
+func TestReconcileFailoverWithExternalAccessCreatesNodePortServices(t *testing.T) {
+	name := fmt.Sprintf("failover-external-%d", time.Now().UnixNano())
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode:  redisv1alpha1.RedisModeFailover,
+			Image: "docker.io/library/redis:8.6.1",
+			Failover: &redisv1alpha1.FailoverSpec{
+				RedisReplicas:    3,
+				SentinelReplicas: 3,
+				Quorum:           2,
+				MasterName:       "mymaster",
+			},
+			ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+				Failover: &redisv1alpha1.FailoverExternalAccessSpec{
+					Type: redisv1alpha1.ExternalAccessTypeNodePort,
+					Sentinel: redisv1alpha1.FailoverExternalAccessNodeSet{
+						Nodes: []redisv1alpha1.ExternalNodeAddress{
+							{Ordinal: 0, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32079}},
+							{Ordinal: 1, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32080}},
+							{Ordinal: 2, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32081}},
+						},
+					},
+					Redis: redisv1alpha1.FailoverExternalAccessNodeSet{
+						Nodes: []redisv1alpha1.ExternalNodeAddress{
+							{Ordinal: 0, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32100}},
+							{Ordinal: 1, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32101}},
+							{Ordinal: 2, ExternalAddress: redisv1alpha1.ExternalAddress{Host: "10.0.0.10", Port: 32102}},
+						},
+					},
+				},
+			},
+		},
+	}
+	mustCreateRedis(t, obj)
+
+	admin := &trackingAdminClient{}
+	r := newTestReconcilerWithAdmin(admin)
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+	firstResult, err := r.Reconcile(testCtx, req)
+	if err != nil {
+		t.Fatalf("first reconcile failed: %v", err)
+	}
+	if firstResult.RequeueAfter != runtimePrerequisitesRequeueAfter {
+		t.Fatalf("unexpected first requeue delay: got %s want %s", firstResult.RequeueAfter, runtimePrerequisitesRequeueAfter)
+	}
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-redis", name))
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-sentinel", name))
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("second reconcile failed: %v", err)
+	}
+
+	for ordinal, port := range []int32{32100, 32101, 32102} {
+		svc := &corev1.Service{}
+		svcName := fmt.Sprintf("%s-redis-external-%d", name, ordinal)
+		if err := k8sClient.Get(testCtx, client.ObjectKey{Namespace: "default", Name: svcName}, svc); err != nil {
+			t.Fatalf("redis external service %s not found: %v", svcName, err)
+		}
+		if svc.Spec.Type != corev1.ServiceTypeNodePort {
+			t.Fatalf("expected redis external service %s to be NodePort", svcName)
+		}
+		if len(svc.Spec.Ports) != 1 || svc.Spec.Ports[0].NodePort != port {
+			t.Fatalf("unexpected redis external nodePort on %s: got %+v", svcName, svc.Spec.Ports)
+		}
+	}
+	for ordinal, port := range []int32{32079, 32080, 32081} {
+		svc := &corev1.Service{}
+		svcName := fmt.Sprintf("%s-sentinel-external-%d", name, ordinal)
+		if err := k8sClient.Get(testCtx, client.ObjectKey{Namespace: "default", Name: svcName}, svc); err != nil {
+			t.Fatalf("sentinel external service %s not found: %v", svcName, err)
+		}
+		if svc.Spec.Type != corev1.ServiceTypeNodePort {
+			t.Fatalf("expected sentinel external service %s to be NodePort", svcName)
+		}
+		if len(svc.Spec.Ports) != 1 || svc.Spec.Ports[0].NodePort != port {
+			t.Fatalf("unexpected sentinel external nodePort on %s: got %+v", svcName, svc.Spec.Ports)
+		}
+	}
+	fetched := mustGetRedis(t, obj)
+	if len(fetched.Status.Endpoints.External) != 3 {
+		t.Fatalf("expected 3 external endpoints, got %d", len(fetched.Status.Endpoints.External))
+	}
+	if fetched.Status.Endpoints.External[0].Port != 32079 {
+		t.Fatalf("unexpected first external endpoint port: got %d want %d", fetched.Status.Endpoints.External[0].Port, 32079)
+	}
 }
 
 func TestReconcileRejectsReservedDirective(t *testing.T) {

@@ -30,7 +30,7 @@ func TestRenderRedisConfigWithTLS(t *testing.T) {
 }
 
 func TestRenderSentinelConfigWithTLS(t *testing.T) {
-	config := RenderSentinelConfig("mymaster", "redis-0.redis.default.svc.cluster.local", 2, nil, true)
+	config := RenderSentinelConfig("mymaster", "redis-0.redis.default.svc.cluster.local", 6379, 2, nil, true)
 	required := []string{
 		"port 0",
 		"tls-port 26379",
@@ -47,5 +47,8 @@ func TestRenderSentinelConfigWithTLS(t *testing.T) {
 	}
 	if strings.Contains(config, "\nport 26379\n") {
 		t.Fatalf("unexpected plaintext sentinel port in tls mode")
+	}
+	if !strings.Contains(config, "sentinel monitor mymaster redis-0.redis.default.svc.cluster.local 6379 2") {
+		t.Fatalf("expected sentinel monitor line with host and port")
 	}
 }

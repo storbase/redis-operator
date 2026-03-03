@@ -27,6 +27,7 @@ func (c *AdminClient) healFailover(ctx context.Context, redisObj *redisv1alpha1.
 	if len(redisAddrs) == 0 {
 		return fmt.Errorf("no redis addresses generated")
 	}
+	externalRedisNodes := failoverExternalRedisNodes(redisObj)
 
 	sentinelAddrs := buildSentinelAddresses(redisObj.Namespace, redisObj.Name, redisObj.Spec.Failover.SentinelReplicas)
 	if len(sentinelAddrs) == 0 {
@@ -40,7 +41,7 @@ func (c *AdminClient) healFailover(ctx context.Context, redisObj *redisv1alpha1.
 			lastErr = err
 			continue
 		}
-		masterAddr, err = normalizeFailoverMasterAddress(masterAddr, redisAddrs)
+		masterAddr, err = normalizeFailoverMasterAddress(masterAddr, redisAddrs, externalRedisNodes)
 		if err != nil {
 			lastErr = err
 			continue
@@ -297,11 +298,20 @@ func (c *AdminClient) waitReplicaTrackingMaster(
 	)
 }
 
-func normalizeFailoverMasterAddress(masterAddr string, redisAddrs []string) (string, error) {
+func normalizeFailoverMasterAddress(
+	masterAddr string,
+	redisAddrs []string,
+	externalRedisNodes []redisv1alpha1.ExternalNodeAddress,
+) (string, error) {
 	host, port, err := splitAddress(masterAddr)
 	if err != nil {
 		return "", err
 	}
+
+	if normalizedExternal, ok := normalizeFailoverExternalMasterAddress(host, port, redisAddrs, externalRedisNodes); ok {
+		return normalizedExternal, nil
+	}
+
 	if port != strconv.Itoa(clusterPort) {
 		return "", fmt.Errorf("sentinel returned unexpected master port %q", port)
 	}
@@ -315,6 +325,59 @@ func normalizeFailoverMasterAddress(masterAddr string, redisAddrs []string) (str
 		return "", fmt.Errorf("sentinel returned unknown master host %q", host)
 	}
 	return net.JoinHostPort(normalizedHost, port), nil
+}
+
+func normalizeFailoverExternalMasterAddress(
+	host, port string,
+	redisAddrs []string,
+	externalRedisNodes []redisv1alpha1.ExternalNodeAddress,
+) (string, bool) {
+	if len(externalRedisNodes) == 0 {
+		return "", false
+	}
+	externalToInternal := buildFailoverExternalToInternalAddressMap(redisAddrs, externalRedisNodes)
+	normalized, ok := externalToInternal[canonicalEndpointKey(host, port)]
+	return normalized, ok
+}
+
+func buildFailoverExternalToInternalAddressMap(
+	redisAddrs []string,
+	externalRedisNodes []redisv1alpha1.ExternalNodeAddress,
+) map[string]string {
+	result := make(map[string]string, len(externalRedisNodes))
+	for _, node := range externalRedisNodes {
+		if node.Ordinal < 0 || int(node.Ordinal) >= len(redisAddrs) {
+			continue
+		}
+		internalAddr := redisAddrs[node.Ordinal]
+		internalHost, internalPort, err := splitAddress(internalAddr)
+		if err != nil {
+			continue
+		}
+		key := canonicalEndpointKey(node.Host, strconv.Itoa(int(node.Port)))
+		result[key] = net.JoinHostPort(internalHost, internalPort)
+	}
+	return result
+}
+
+func canonicalEndpointKey(host, port string) string {
+	trimmedHost := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	trimmedPort := strings.TrimSpace(port)
+	if trimmedHost == "" || trimmedPort == "" {
+		return ""
+	}
+	trimmedHost = strings.Trim(trimmedHost, "[]")
+	if strings.Contains(trimmedHost, ":") {
+		return net.JoinHostPort(trimmedHost, trimmedPort)
+	}
+	return trimmedHost + ":" + trimmedPort
+}
+
+func failoverExternalRedisNodes(redisObj *redisv1alpha1.Redis) []redisv1alpha1.ExternalNodeAddress {
+	if redisObj.Spec.ExternalAccess == nil || redisObj.Spec.ExternalAccess.Failover == nil {
+		return nil
+	}
+	return redisObj.Spec.ExternalAccess.Failover.Redis.Nodes
 }
 
 func buildFailoverHostAliases(redisAddrs []string) map[string]string {

@@ -20,8 +20,8 @@ spec:
     - jsonPath: .spec.mode
       name: Mode
       type: string
-    - jsonPath: .status.endpoint
-      name: Endpoint
+    - jsonPath: .status.endpoints.internal[0].host
+      name: InternalEndpoint
       type: string
     - jsonPath: .status.health
       name: Health
@@ -1415,6 +1415,94 @@ spec:
                           otherwise to an implementation-defined value. Requests cannot exceed Limits.
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
+                    type: object
+                type: object
+              externalAccess:
+                description: ExternalAccessSpec configures external service exposure.
+                properties:
+                  cluster:
+                    description: ClusterExternalAccessSpec is reserved for future
+                      cluster external exposure.
+                    type: object
+                  failover:
+                    description: FailoverExternalAccessSpec configures failover external
+                      exposure.
+                    properties:
+                      redis:
+                        description: FailoverExternalAccessNodeSet stores per-pod
+                          external endpoints.
+                        properties:
+                          nodes:
+                            items:
+                              description: ExternalNodeAddress represents one endpoint
+                                mapped to a StatefulSet ordinal.
+                              properties:
+                                host:
+                                  minLength: 1
+                                  type: string
+                                ordinal:
+                                  format: int32
+                                  minimum: 0
+                                  type: integer
+                                port:
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                              required:
+                              - host
+                              - ordinal
+                              - port
+                              type: object
+                            maxItems: 32
+                            minItems: 1
+                            type: array
+                        required:
+                        - nodes
+                        type: object
+                      sentinel:
+                        description: FailoverExternalAccessNodeSet stores per-pod
+                          external endpoints.
+                        properties:
+                          nodes:
+                            items:
+                              description: ExternalNodeAddress represents one endpoint
+                                mapped to a StatefulSet ordinal.
+                              properties:
+                                host:
+                                  minLength: 1
+                                  type: string
+                                ordinal:
+                                  format: int32
+                                  minimum: 0
+                                  type: integer
+                                port:
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                              required:
+                              - host
+                              - ordinal
+                              - port
+                              type: object
+                            maxItems: 32
+                            minItems: 1
+                            type: array
+                        required:
+                        - nodes
+                        type: object
+                      type:
+                        description: ExternalAccessType declares how services are
+                          exposed out of cluster.
+                        enum:
+                        - NodePort
+                        - LoadBalancer
+                        type: string
+                    required:
+                    - redis
+                    - sentinel
+                    - type
                     type: object
                 type: object
               failover:
@@ -4030,8 +4118,45 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              endpoint:
-                type: string
+              endpoints:
+                description: EndpointStatus stores user-facing internal and external
+                  endpoints.
+                properties:
+                  external:
+                    items:
+                      description: ExternalAddress represents one host:port endpoint.
+                      properties:
+                        host:
+                          minLength: 1
+                          type: string
+                        port:
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                      required:
+                      - host
+                      - port
+                      type: object
+                    type: array
+                  internal:
+                    items:
+                      description: ExternalAddress represents one host:port endpoint.
+                      properties:
+                        host:
+                          minLength: 1
+                          type: string
+                        port:
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                      required:
+                      - host
+                      - port
+                      type: object
+                    type: array
+                type: object
               health:
                 type: boolean
               observedRedisReadyReplicas:
@@ -4057,6 +4182,15 @@ spec:
         - message: sentinelConfig is only allowed in Failover mode
           rule: self.spec.mode == 'Failover' || !has(self.spec.sentinelConfig) ||
             size(self.spec.sentinelConfig) == 0
+        - message: externalAccess.failover is only allowed in Failover mode
+          rule: self.spec.mode == 'Failover' || !has(self.spec.externalAccess) ||
+            !has(self.spec.externalAccess.failover)
+        - message: externalAccess.cluster is reserved and not implemented in this
+            release
+          rule: '!has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)'
+        - message: externalAccess.failover.type must be NodePort in this release
+          rule: '!has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover)
+            || self.spec.externalAccess.failover.type == ''NodePort'''
         - message: failover.quorum must be <= failover.sentinelReplicas
           rule: '!has(self.spec.failover) || self.spec.failover.quorum <= self.spec.failover.sentinelReplicas'
         - message: mode is immutable

@@ -44,3 +44,33 @@ func NewService(name, namespace string, labels map[string]string, portName strin
 		},
 	}
 }
+
+// NewNodePortService creates a NodePort service.
+func NewNodePortService(
+	name,
+	namespace string,
+	labels,
+	selector map[string]string,
+	portName string,
+	port,
+	targetPort,
+	nodePort int32,
+) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeNodePort,
+			Selector: selector,
+			Ports: []corev1.ServicePort{{
+				Name:       portName,
+				Port:       port,
+				TargetPort: intstr.FromInt(int(targetPort)),
+				NodePort:   nodePort,
+			}},
+		},
+	}
+}

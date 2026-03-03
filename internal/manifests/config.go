@@ -66,9 +66,19 @@ func RenderRedisConfig(mode redisv1alpha1.RedisMode, userLines []string, tlsEnab
 }
 
 // RenderSentinelConfig composes operator-managed and user-provided sentinel directives.
-func RenderSentinelConfig(masterName, masterHost string, quorum int32, userLines []string, tlsEnabled bool) string {
+func RenderSentinelConfig(
+	masterName,
+	masterHost string,
+	masterPort int32,
+	quorum int32,
+	userLines []string,
+	tlsEnabled bool,
+) string {
 	if quorum < 2 {
 		quorum = 2
+	}
+	if masterPort < 1 {
+		masterPort = 6379
 	}
 	managed := []string{"dir /tmp"}
 	if tlsEnabled {
@@ -87,7 +97,7 @@ func RenderSentinelConfig(masterName, masterHost string, quorum int32, userLines
 	managed = append(managed,
 		"sentinel resolve-hostnames yes",
 		"sentinel announce-hostnames yes",
-		fmt.Sprintf("sentinel monitor %s %s 6379 %d", masterName, masterHost, quorum),
+		fmt.Sprintf("sentinel monitor %s %s %d %d", masterName, masterHost, masterPort, quorum),
 		fmt.Sprintf("sentinel down-after-milliseconds %s 30000", masterName),
 		fmt.Sprintf("sentinel parallel-syncs %s 1", masterName),
 		fmt.Sprintf("sentinel failover-timeout %s 180000", masterName),

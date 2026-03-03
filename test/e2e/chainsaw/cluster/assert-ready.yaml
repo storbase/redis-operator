@@ -4,7 +4,14 @@ metadata:
   name: redis-cluster
   namespace: redis-e2e
 status:
-  endpoint: redis-cluster-shard-0-0.redis-cluster-shard-0.redis-e2e.svc:6379,redis-cluster-shard-1-0.redis-cluster-shard-1.redis-e2e.svc:6379,redis-cluster-shard-2-0.redis-cluster-shard-2.redis-e2e.svc:6379
+  endpoints:
+    internal:
+    - host: redis-cluster-shard-0-0.redis-cluster-shard-0.redis-e2e.svc.cluster.local
+      port: 6379
+    - host: redis-cluster-shard-1-0.redis-cluster-shard-1.redis-e2e.svc.cluster.local
+      port: 6379
+    - host: redis-cluster-shard-2-0.redis-cluster-shard-2.redis-e2e.svc.cluster.local
+      port: 6379
   health: true
   reason: Healthy
 ---

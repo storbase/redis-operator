@@ -81,15 +81,15 @@ if [ "$replica_count" -ne "$expected_replicas" ]; then
   exit 1
 fi
 
-endpoint="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.status.endpoint}')"
-if [ -z "$endpoint" ]; then
-  echo "status.endpoint is empty"
+endpoint_hosts="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{range .status.endpoints.internal[*]}{.host}{"\n"}{end}')"
+if [ -z "$endpoint_hosts" ]; then
+  echo "status.endpoints.internal is empty"
   exit 1
 fi
 
-seed_count="$(printf '%s' "$endpoint" | awk -F, '{print NF}')"
+seed_count="$(printf '%s\n' "$endpoint_hosts" | sed '/^$/d' | wc -l | tr -d ' ')"
 if [ "$seed_count" -ne "$shards" ]; then
-  echo "unexpected endpoint seed count: $seed_count endpoint=$endpoint"
+  echo "unexpected internal redis endpoint count: $seed_count expected=$shards"
   exit 1
 fi
 

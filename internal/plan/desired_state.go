@@ -9,22 +9,22 @@ import (
 
 // DesiredState contains all objects that should exist for a Redis resource.
 type DesiredState struct {
-	Objects  []client.Object
-	Endpoint string
+	Objects   []client.Object
+	Endpoints redisv1alpha1.EndpointStatus
 }
 
 // BuildDesiredState renders mode-specific desired Kubernetes objects.
 func BuildDesiredState(redis *redisv1alpha1.Redis) (DesiredState, error) {
 	if redis.Spec.Mode == redisv1alpha1.RedisModeCluster {
-		objects, endpoint, err := clusterTopology.BuildDesiredState(redis)
+		objects, endpoints, err := clusterTopology.BuildDesiredState(redis)
 		if err != nil {
 			return DesiredState{}, err
 		}
-		return DesiredState{Objects: objects, Endpoint: endpoint}, nil
+		return DesiredState{Objects: objects, Endpoints: endpoints}, nil
 	}
-	objects, endpoint, err := failoverTopology.BuildDesiredState(redis)
+	objects, endpoints, err := failoverTopology.BuildDesiredState(redis)
 	if err != nil {
 		return DesiredState{}, err
 	}
-	return DesiredState{Objects: objects, Endpoint: endpoint}, nil
+	return DesiredState{Objects: objects, Endpoints: endpoints}, nil
 }

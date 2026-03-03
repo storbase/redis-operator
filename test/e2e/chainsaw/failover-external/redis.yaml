@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-failover-auth
+  namespace: redis-e2e
+type: Opaque
+stringData:
+  redis-password: failover-redis-pass-123
+  sentinel-password: failover-sentinel-pass-123
+---
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-failover
+  namespace: redis-e2e
+spec:
+  mode: Failover
+  image: docker.io/library/redis:8.6.1
+  imagePullPolicy: IfNotPresent
+  tls:
+    secretName: redis-failover-tls
+  auth:
+    redisPasswordSecretRef:
+      name: redis-failover-auth
+      key: redis-password
+    sentinelPasswordSecretRef:
+      name: redis-failover-auth
+      key: sentinel-password
+  failover:
+    redisReplicas: 3
+    sentinelReplicas: 3
+    quorum: 2
+    masterName: mymaster
+    storage:
+      size: 1Gi
+  externalAccess:
+    failover:
+      type: NodePort
+      sentinel:
+        nodes:
+        - ordinal: 0
+          host: __NODE_IP__
+          port: 32079
+        - ordinal: 1
+          host: __NODE_IP__
+          port: 32080
+        - ordinal: 2
+          host: __NODE_IP__
+          port: 32081
+      redis:
+        nodes:
+        - ordinal: 0
+          host: __NODE_IP__
+          port: 32100
+        - ordinal: 1
+          host: __NODE_IP__
+          port: 32101
+        - ordinal: 2
+          host: __NODE_IP__
+          port: 32102
+  sentinelConfig:
+  - sentinel down-after-milliseconds mymaster 5000
+  - sentinel failover-timeout mymaster 60000
