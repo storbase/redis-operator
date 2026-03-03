@@ -7,6 +7,7 @@ artifact_dir="${E2E_ARTIFACT_DIR_PR:?E2E_ARTIFACT_DIR_PR is required}"
 chainsaw_dir="${E2E_CHAINSAW_DIR:?E2E_CHAINSAW_DIR is required}"
 chainsaw_config="${E2E_CHAINSAW_CONFIG:?E2E_CHAINSAW_CONFIG is required}"
 chainsaw_suites="${E2E_CHAINSAW_SUITES:-cluster,failover}"
+chainsaw_skip_delete="${E2E_CHAINSAW_SKIP_DELETE:-true}"
 image="${E2E_IMG:?E2E_IMG is required}"
 kubectl_bin="${KUBECTL_BIN:?KUBECTL_BIN is required}"
 container_tool="${CONTAINER_TOOL_BIN:?CONTAINER_TOOL_BIN is required}"
@@ -65,14 +66,20 @@ kind load docker-image "$image" --name "$cluster_name"
 "$kubectl_bin" create namespace "$namespace"
 
 set +e
-chainsaw test \
-  --config "$chainsaw_config" \
-  --test-file chainsaw-test.yaml \
-  "${chainsaw_suite_dirs[@]}" \
-  --kube-context "kind-${cluster_name}" \
-  --report-format JUNIT-TEST \
-  --report-name chainsaw-pr \
+chainsaw_cmd=(
+  test
+  --config "$chainsaw_config"
+  --test-file chainsaw-test.yaml
+  "${chainsaw_suite_dirs[@]}"
+  --kube-context "kind-${cluster_name}"
+  --report-format JUNIT-TEST
+  --report-name chainsaw-pr
   --report-path "$artifact_dir"
+)
+if [ "$chainsaw_skip_delete" = "true" ]; then
+  chainsaw_cmd+=(--skip-delete)
+fi
+chainsaw "${chainsaw_cmd[@]}"
 rc=$?
 set -e
 
