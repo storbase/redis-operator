@@ -15,6 +15,8 @@ endif
 CONTAINER_TOOL ?= docker
 HELM ?= helm
 CHART_DIR ?= charts/redis-operator
+CHART_CRD_FILE ?= $(CHART_DIR)/crds/redis.storbase.io_redis.yaml
+BASE_CRD_FILE ?= config/crd/bases/redis.storbase.io_redis.yaml
 HELM_PACKAGE_DIR ?= .chart-packages
 HELM_TEMPLATE_KUBE_VERSION ?= 1.35.0
 
@@ -100,12 +102,23 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 helm-lint: ## Run helm lint against the redis-operator chart.
 	$(HELM) lint $(CHART_DIR)
 
+.PHONY: helm-sync-crds
+helm-sync-crds: manifests ## Sync generated CRD into Helm chart.
+	cp $(BASE_CRD_FILE) $(CHART_CRD_FILE)
+
+.PHONY: helm-verify-crds
+helm-verify-crds: manifests ## Verify Helm chart CRDs are in sync with generated CRDs.
+	@diff -u "$(BASE_CRD_FILE)" "$(CHART_CRD_FILE)" >/dev/null || { \
+		echo "Error: chart CRD is out of sync. Run 'make helm-sync-crds' and commit the result."; \
+		exit 1; \
+	}
+
 .PHONY: helm-template
 helm-template: ## Render redis-operator chart templates.
 	$(HELM) template redis-operator $(CHART_DIR) --namespace $(E2E_OPERATOR_NAMESPACE) --include-crds --kube-version $(HELM_TEMPLATE_KUBE_VERSION) >/dev/null
 
 .PHONY: helm-test
-helm-test: helm-lint helm-template ## Run helm chart static checks.
+helm-test: helm-lint helm-verify-crds helm-template ## Run helm chart static checks.
 
 .PHONY: helm-package
 helm-package: ## Package redis-operator chart.
