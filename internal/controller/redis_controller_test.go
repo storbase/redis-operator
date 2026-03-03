@@ -182,7 +182,7 @@ func TestReconcileRejectsShardChangesLargerThanOneStep(t *testing.T) {
 			Mode: redisv1alpha1.RedisModeCluster,
 			Cluster: &redisv1alpha1.ClusterSpec{
 				Shards:           1,
-				ReplicasPerShard: 0,
+				ReplicasPerShard: 1,
 			},
 		},
 	}
@@ -219,7 +219,7 @@ func TestReconcileAllowsSingleStepShardChanges(t *testing.T) {
 			Mode: redisv1alpha1.RedisModeCluster,
 			Cluster: &redisv1alpha1.ClusterSpec{
 				Shards:           1,
-				ReplicasPerShard: 0,
+				ReplicasPerShard: 1,
 			},
 		},
 	}
@@ -252,7 +252,7 @@ func TestReconcileRejectsImmutableReplicaPerShardChanges(t *testing.T) {
 			Mode: redisv1alpha1.RedisModeCluster,
 			Cluster: &redisv1alpha1.ClusterSpec{
 				Shards:           1,
-				ReplicasPerShard: 0,
+				ReplicasPerShard: 1,
 			},
 		},
 	}
@@ -271,7 +271,7 @@ func TestReconcileRejectsImmutableReplicaPerShardChanges(t *testing.T) {
 	if err := k8sClient.Get(testCtx, client.ObjectKeyFromObject(obj), fetched); err != nil {
 		t.Fatalf("get redis failed: %v", err)
 	}
-	fetched.Spec.Cluster.ReplicasPerShard = 1
+	fetched.Spec.Cluster.ReplicasPerShard = 2
 	if err := k8sClient.Update(testCtx, fetched); err != nil {
 		if !apierrors.IsInvalid(err) {
 			t.Fatalf("expected invalid error on replicasPerShard update, got: %v", err)
