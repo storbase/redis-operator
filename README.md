@@ -56,7 +56,7 @@ Helm does not upgrade or delete CRDs from this directory.
 To upgrade CRDs, apply them manually before chart upgrade:
 
 ```bash
-OPERATOR_VERSION=v0.0.0
+OPERATOR_VERSION=v0.1.0
 kubectl apply -f https://raw.githubusercontent.com/storbase/redis-operator/${OPERATOR_VERSION}/config/crd/bases/redis.storbase.io_redis.yaml
 helm upgrade redis-operator oci://ghcr.io/storbase/charts/redis-operator \
   --namespace redis-operator-system
