@@ -89,6 +89,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	before := redis.DeepCopy()
+	r.ensureModeRuntimeStatus(redis)
 
 	if err := plan.ValidateSemantic(redis); err != nil {
 		r.emitWarning(redis, "InvalidSpec", err.Error())
@@ -264,9 +265,9 @@ func (r *RedisReconciler) setObservedReadyReplicaCounts(ctx context.Context, red
 
 	switch redis.Spec.Mode {
 	case redisv1alpha1.RedisModeCluster:
+		clusterStatus := ensureClusterRuntimeStatus(redis)
 		if redis.Spec.Cluster == nil {
-			redis.Status.ObservedRedisReadyReplicas = 0
-			redis.Status.ObservedSentinelReadyReplicas = 0
+			clusterStatus.ObservedReadyReplicas = 0
 			return nil
 		}
 		for shard := int32(0); shard < redis.Spec.Cluster.Shards; shard++ {
@@ -277,7 +278,9 @@ func (r *RedisReconciler) setObservedReadyReplicaCounts(ctx context.Context, red
 			}
 			redisReady += snapshot.ReadyReplicas
 		}
+		clusterStatus.ObservedReadyReplicas = redisReady
 	case redisv1alpha1.RedisModeFailover:
+		failoverStatus := ensureFailoverRuntimeStatus(redis)
 		redisSnapshot, err := r.readStatefulSetStatus(ctx, redis.Namespace, fmt.Sprintf("%s-redis", redis.Name))
 		if err != nil {
 			return err
@@ -288,11 +291,35 @@ func (r *RedisReconciler) setObservedReadyReplicaCounts(ctx context.Context, red
 		}
 		redisReady = redisSnapshot.ReadyReplicas
 		sentinelReady = sentinelSnapshot.ReadyReplicas
+		failoverStatus.ObservedRedisReadyReplicas = redisReady
+		failoverStatus.ObservedSentinelReadyReplicas = sentinelReady
 	}
-
-	redis.Status.ObservedRedisReadyReplicas = redisReady
-	redis.Status.ObservedSentinelReadyReplicas = sentinelReady
 	return nil
+}
+
+func (r *RedisReconciler) ensureModeRuntimeStatus(redis *redisv1alpha1.Redis) {
+	switch redis.Spec.Mode {
+	case redisv1alpha1.RedisModeCluster:
+		redis.Status.Failover = nil
+		ensureClusterRuntimeStatus(redis)
+	case redisv1alpha1.RedisModeFailover:
+		redis.Status.Cluster = nil
+		ensureFailoverRuntimeStatus(redis)
+	}
+}
+
+func ensureClusterRuntimeStatus(redis *redisv1alpha1.Redis) *redisv1alpha1.ClusterRuntimeStatus {
+	if redis.Status.Cluster == nil {
+		redis.Status.Cluster = &redisv1alpha1.ClusterRuntimeStatus{}
+	}
+	return redis.Status.Cluster
+}
+
+func ensureFailoverRuntimeStatus(redis *redisv1alpha1.Redis) *redisv1alpha1.FailoverRuntimeStatus {
+	if redis.Status.Failover == nil {
+		redis.Status.Failover = &redisv1alpha1.FailoverRuntimeStatus{}
+	}
+	return redis.Status.Failover
 }
 
 func (r *RedisReconciler) patchStatusIfChanged(ctx context.Context, before, after *redisv1alpha1.Redis) error {

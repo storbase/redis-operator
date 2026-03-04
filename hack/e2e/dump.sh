@@ -20,7 +20,7 @@ kubectl -n "$namespace" get statefulsets -o yaml >"${artifact_dir}/statefulsets.
 kubectl -n "$namespace" get pvc -o wide >"${artifact_dir}/pvcs.txt" 2>&1 || true
 kubectl -n "$namespace" get service -o wide >"${artifact_dir}/services.txt" 2>&1 || true
 kubectl -n "$namespace" get redis -o yaml >"${artifact_dir}/redis-crs.yaml" 2>&1 || true
-kubectl -n "$namespace" get redis -o jsonpath='{range .items[*]}{.metadata.name}{"\tphase="}{.status.clusterScale.phase}{"\tfrom="}{.status.clusterScale.fromShards}{"\tto="}{.status.clusterScale.toShards}{"\treason="}{.status.reason}{"\tlastError="}{.status.clusterScale.lastError}{"\n"}{end}' >"${artifact_dir}/redis-status-summary.txt" 2>&1 || true
+kubectl -n "$namespace" get redis -o jsonpath='{range .items[*]}{.metadata.name}{"\tphase="}{.status.cluster.scale.phase}{"\tfrom="}{.status.cluster.scale.fromShards}{"\tto="}{.status.cluster.scale.toShards}{"\treason="}{.status.reason}{"\tlastError="}{.status.cluster.scale.lastError}{"\n"}{end}' >"${artifact_dir}/redis-status-summary.txt" 2>&1 || true
 kubectl -n "$namespace" get events --sort-by=.lastTimestamp >"${artifact_dir}/events.txt" 2>&1 || true
 kubectl -n "$namespace" get jobs -l app.kubernetes.io/component=cluster-scale -o yaml >"${artifact_dir}/cluster-scale-jobs.yaml" 2>&1 || true
 kubectl -n "$namespace" get pods -l app.kubernetes.io/component=cluster-scale -o yaml >"${artifact_dir}/cluster-scale-pods.yaml" 2>&1 || true

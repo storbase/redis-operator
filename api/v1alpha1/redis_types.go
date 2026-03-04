@@ -128,6 +128,12 @@ type ClusterSpec struct {
 type ClusterRuntimeStatus struct {
 	// ObservedShards is the latest observed number of cluster masters.
 	ObservedShards int32 `json:"observedShards,omitempty"`
+
+	// Scale tracks shard scale operation status in Cluster mode.
+	Scale ClusterScaleStatus `json:"scale,omitempty"`
+
+	// ObservedReadyReplicas is the current number of ready cluster redis pods observed from StatefulSet status.
+	ObservedReadyReplicas int32 `json:"observedReadyReplicas,omitempty"`
 }
 
 // ClusterScaleStatus stores shard scaling operation runtime state.
@@ -294,20 +300,22 @@ type EndpointStatus struct {
 	External []ExternalAddress `json:"external,omitempty"`
 }
 
-// RedisStatus defines the observed state of Redis.
-type RedisStatus struct {
-	Endpoints EndpointStatus       `json:"endpoints,omitempty"`
-	Health    bool                 `json:"health,omitempty"`
-	Reason    RedisHealthReason    `json:"reason,omitempty"`
-	Cluster   ClusterRuntimeStatus `json:"cluster,omitempty"`
-	// ClusterScale tracks shard scale operation status in Cluster mode.
-	ClusterScale ClusterScaleStatus `json:"clusterScale,omitempty"`
-
-	// ObservedRedisReadyReplicas is the current number of ready redis pods observed from StatefulSet status.
+// FailoverRuntimeStatus stores observed failover runtime information.
+type FailoverRuntimeStatus struct {
+	// ObservedRedisReadyReplicas is the current number of ready failover redis pods observed from StatefulSet status.
 	ObservedRedisReadyReplicas int32 `json:"observedRedisReadyReplicas,omitempty"`
 
-	// ObservedSentinelReadyReplicas is the current number of ready sentinel pods observed from StatefulSet status.
+	// ObservedSentinelReadyReplicas is the current number of ready failover sentinel pods observed from StatefulSet status.
 	ObservedSentinelReadyReplicas int32 `json:"observedSentinelReadyReplicas,omitempty"`
+}
+
+// RedisStatus defines the observed state of Redis.
+type RedisStatus struct {
+	Endpoints EndpointStatus         `json:"endpoints,omitempty"`
+	Health    bool                   `json:"health,omitempty"`
+	Reason    RedisHealthReason      `json:"reason,omitempty"`
+	Cluster   *ClusterRuntimeStatus  `json:"cluster,omitempty"`
+	Failover  *FailoverRuntimeStatus `json:"failover,omitempty"`
 
 	// Conditions contains the latest observations of this resource's runtime state.
 	// +optional

@@ -6,5 +6,6 @@ metadata:
 status:
   health: true
   reason: Healthy
-  observedRedisReadyReplicas: 4
-  observedSentinelReadyReplicas: 3
+  failover:
+    observedRedisReadyReplicas: 4
+    observedSentinelReadyReplicas: 3

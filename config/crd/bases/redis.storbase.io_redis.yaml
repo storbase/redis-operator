@@ -4066,43 +4066,48 @@ spec:
                 description: ClusterRuntimeStatus stores observed cluster topology
                   information.
                 properties:
+                  observedReadyReplicas:
+                    description: ObservedReadyReplicas is the current number of ready
+                      cluster redis pods observed from StatefulSet status.
+                    format: int32
+                    type: integer
                   observedShards:
                     description: ObservedShards is the latest observed number of cluster
                       masters.
                     format: int32
                     type: integer
-                type: object
-              clusterScale:
-                description: ClusterScale tracks shard scale operation status in Cluster
-                  mode.
-                properties:
-                  completedAt:
-                    format: date-time
-                    type: string
-                  fromShards:
-                    format: int32
-                    type: integer
-                  jobName:
-                    type: string
-                  lastError:
-                    type: string
-                  observedGeneration:
-                    format: int64
-                    type: integer
-                  phase:
-                    description: ClusterScalePhase represents the current phase of
-                      cluster shard scaling.
-                    type: string
-                  retryToken:
-                    description: RetryToken stores the last observed manual retry
-                      token value.
-                    type: string
-                  startedAt:
-                    format: date-time
-                    type: string
-                  toShards:
-                    format: int32
-                    type: integer
+                  scale:
+                    description: Scale tracks shard scale operation status in Cluster
+                      mode.
+                    properties:
+                      completedAt:
+                        format: date-time
+                        type: string
+                      fromShards:
+                        format: int32
+                        type: integer
+                      jobName:
+                        type: string
+                      lastError:
+                        type: string
+                      observedGeneration:
+                        format: int64
+                        type: integer
+                      phase:
+                        description: ClusterScalePhase represents the current phase
+                          of cluster shard scaling.
+                        type: string
+                      retryToken:
+                        description: RetryToken stores the last observed manual retry
+                          token value.
+                        type: string
+                      startedAt:
+                        format: date-time
+                        type: string
+                      toShards:
+                        format: int32
+                        type: integer
+                    type: object
                 type: object
               conditions:
                 description: Conditions contains the latest observations of this resource's
@@ -4204,18 +4209,23 @@ spec:
                       type: object
                     type: array
                 type: object
+              failover:
+                description: FailoverRuntimeStatus stores observed failover runtime
+                  information.
+                properties:
+                  observedRedisReadyReplicas:
+                    description: ObservedRedisReadyReplicas is the current number
+                      of ready failover redis pods observed from StatefulSet status.
+                    format: int32
+                    type: integer
+                  observedSentinelReadyReplicas:
+                    description: ObservedSentinelReadyReplicas is the current number
+                      of ready failover sentinel pods observed from StatefulSet status.
+                    format: int32
+                    type: integer
+                type: object
               health:
                 type: boolean
-              observedRedisReadyReplicas:
-                description: ObservedRedisReadyReplicas is the current number of ready
-                  redis pods observed from StatefulSet status.
-                format: int32
-                type: integer
-              observedSentinelReadyReplicas:
-                description: ObservedSentinelReadyReplicas is the current number of
-                  ready sentinel pods observed from StatefulSet status.
-                format: int32
-                type: integer
               reason:
                 description: RedisHealthReason is the machine-readable reason for
                   the current health status.

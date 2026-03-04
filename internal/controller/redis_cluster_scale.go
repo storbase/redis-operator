@@ -79,7 +79,8 @@ func (r *RedisReconciler) newClusterScaleReconcileContext(
 	redis *redisv1alpha1.Redis,
 ) *clusterScaleReconcileContext {
 	now := metav1.NewTime(time.Now())
-	scale := &redis.Status.ClusterScale
+	clusterStatus := ensureClusterRuntimeStatus(redis)
+	scale := &clusterStatus.Scale
 	retryToken := clusterScaleRetryToken(redis)
 	if scale.Phase == "" {
 		scale.Phase = redisv1alpha1.ClusterScalePhaseIdle
@@ -87,18 +88,18 @@ func (r *RedisReconciler) newClusterScaleReconcileContext(
 
 	observation, observeErr := clusterTopology.ObserveRuntime(ctx, r.RedisAdmin, redis.Namespace, redis.Name)
 	if observeErr == nil && observation.ClusterSize > 0 {
-		redis.Status.Cluster.ObservedShards = observation.ClusterSize
+		clusterStatus.ObservedShards = observation.ClusterSize
 	}
-	if redis.Status.Cluster.ObservedShards <= 0 {
+	if clusterStatus.ObservedShards <= 0 {
 		// Bootstrap compatibility: use desired shards before the first successful observation.
-		redis.Status.Cluster.ObservedShards = redis.Spec.Cluster.Shards
+		clusterStatus.ObservedShards = redis.Spec.Cluster.Shards
 	}
 
 	targetShards := redis.Spec.Cluster.Shards
-	observedShards := redis.Status.Cluster.ObservedShards
+	observedShards := clusterStatus.ObservedShards
 	if isInitialClusterBootstrap(redis, scale) {
 		observedShards = targetShards
-		redis.Status.Cluster.ObservedShards = targetShards
+		clusterStatus.ObservedShards = targetShards
 	}
 
 	return &clusterScaleReconcileContext{
@@ -229,7 +230,7 @@ func (r *RedisReconciler) reconcileClusterScaleFinalizing(
 		}
 	}
 
-	redis.Status.Cluster.ObservedShards = state.scale.ToShards
+	ensureClusterRuntimeStatus(redis).ObservedShards = state.scale.ToShards
 	resetClusterScaleStatus(state.scale, state.now)
 	r.setHealthHealthy(redis, fmt.Sprintf("Cluster scale completed: %d -> %d", state.scale.FromShards, state.scale.ToShards))
 	return ctrl.Result{}
@@ -301,7 +302,7 @@ func resetClusterScaleStatus(scale *redisv1alpha1.ClusterScaleStatus, now metav1
 }
 
 func (r *RedisReconciler) markClusterScaleFailed(redis *redisv1alpha1.Redis, message string, now metav1.Time) {
-	scale := &redis.Status.ClusterScale
+	scale := &ensureClusterRuntimeStatus(redis).Scale
 	scale.Phase = redisv1alpha1.ClusterScalePhaseFailed
 	scale.LastError = message
 	scale.CompletedAt = &now

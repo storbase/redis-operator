@@ -6,9 +6,9 @@ metadata:
 status:
   health: true
   reason: Healthy
-  observedRedisReadyReplicas: 6
   cluster:
+    observedReadyReplicas: 6
     observedShards: 3
-  clusterScale:
-    phase: Idle
-    toShards: 3
+    scale:
+      phase: Idle
+      toShards: 3
