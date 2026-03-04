@@ -1,0 +1,40 @@
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-cluster
+  namespace: redis-e2e
+status:
+  endpoints:
+    internal:
+    - host: redis-cluster-shard-0-0.redis-cluster-shard-0.redis-e2e.svc.cluster.local
+      port: 6379
+    - host: redis-cluster-shard-1-0.redis-cluster-shard-1.redis-e2e.svc.cluster.local
+      port: 6379
+    - host: redis-cluster-shard-2-0.redis-cluster-shard-2.redis-e2e.svc.cluster.local
+      port: 6379
+  health: true
+  reason: Healthy
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster-shard-0
+  namespace: redis-e2e
+status:
+  readyReplicas: 2
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster-shard-1
+  namespace: redis-e2e
+status:
+  readyReplicas: 2
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster-shard-2
+  namespace: redis-e2e
+status:
+  readyReplicas: 2

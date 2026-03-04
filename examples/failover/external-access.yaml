@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-failover-external-auth
+  namespace: default
+type: Opaque
+stringData:
+  redis-password: failover-redis-pass-123
+  sentinel-password: failover-sentinel-pass-123
+---
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-failover-external
+  namespace: default
+spec:
+  mode: failover
+  image: docker.io/library/redis:8.6.1
+  imagePullPolicy: IfNotPresent
+  auth:
+    redisPasswordSecretRef:
+      name: redis-failover-external-auth
+      key: redis-password
+    sentinelPasswordSecretRef:
+      name: redis-failover-external-auth
+      key: sentinel-password
+  failover:
+    redisReplicas: 3
+    sentinelReplicas: 3
+    quorum: 2
+    masterName: mymaster
+    storage:
+      size: 10Gi
+  externalAccess:
+    failover:
+      type: NodePort
+      # Replace host/port values with routable addresses and free NodePort values.
+      sentinel:
+        nodes:
+        - ordinal: 0
+          host: 10.0.0.10
+          port: 32079
+        - ordinal: 1
+          host: 10.0.0.10
+          port: 32080
+        - ordinal: 2
+          host: 10.0.0.10
+          port: 32081
+      redis:
+        nodes:
+        - ordinal: 0
+          host: 10.0.0.10
+          port: 32100
+        - ordinal: 1
+          host: 10.0.0.10
+          port: 32101
+        - ordinal: 2
+          host: 10.0.0.10
+          port: 32102

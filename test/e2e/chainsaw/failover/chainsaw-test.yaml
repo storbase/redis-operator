@@ -1,0 +1,73 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: redis-failover-steady
+spec:
+  steps:
+  - name: apply-and-verify-failover-steady-state
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-failover-tls \
+            redis-failover.redis-e2e.svc.cluster.local \
+            '*.redis-failover-redis-headless.redis-e2e.svc.cluster.local' \
+            '*.redis-failover-sentinel.redis-e2e.svc.cluster.local' \
+            'redis-failover-redis.redis-e2e.svc.cluster.local' \
+            'redis-failover-sentinel.redis-e2e.svc.cluster.local'
+    - apply:
+        file: redis.yaml
+    - assert:
+        timeout: 10m
+        file: assert-ready.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_failover.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
+    - script:
+        timeout: 12m
+        content: |
+          set -eu
+          bash ../../scripts/assert_failover_recovery.sh redis-e2e redis-failover mymaster failover-redis-pass-123 failover-sentinel-pass-123
+
+  - name: scale out
+    try:
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-failover --type=merge -p '{"spec":{"failover":{"redisReplicas":4}}}'
+    - assert:
+        timeout: 5m
+        file: assert-scale-out-status.yaml
+
+  - name: prepare-master-on-redis-3
+    try:
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/force_master_to_ordinal.sh redis-e2e redis-failover mymaster 3 failover-redis-pass-123 failover-sentinel-pass-123
+
+  - name: scale in
+    try:
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-failover --type=merge -p '{"spec":{"failover":{"redisReplicas":3}}}'
+          delete_deadline=$(( $(date +%s) + 300 ))
+          while kubectl -n redis-e2e get pod redis-failover-redis-3 >/dev/null 2>&1; do
+            if [ "$(date +%s)" -ge "$delete_deadline" ]; then
+              echo "timeout waiting redis-failover-redis-3 to be deleted"
+              exit 1
+            fi
+            sleep 2
+          done
+    - assert:
+        timeout: 5m
+        file: assert-scale-in-status.yaml

@@ -1,0 +1,32 @@
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-failover
+  namespace: redis-e2e
+status:
+  endpoints:
+    internal:
+    - host: redis-failover-sentinel-0.redis-failover-sentinel.redis-e2e.svc.cluster.local
+      port: 26379
+    - host: redis-failover-sentinel-1.redis-failover-sentinel.redis-e2e.svc.cluster.local
+      port: 26379
+    - host: redis-failover-sentinel-2.redis-failover-sentinel.redis-e2e.svc.cluster.local
+      port: 26379
+  health: true
+  reason: Healthy
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-failover-redis
+  namespace: redis-e2e
+status:
+  readyReplicas: 3
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-failover-sentinel
+  namespace: redis-e2e
+status:
+  readyReplicas: 3

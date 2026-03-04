@@ -1,0 +1,71 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: redis-cluster-bootstrap
+spec:
+  steps:
+  - name: apply-and-verify-cluster
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-cluster-tls \
+            redis-cluster.redis-e2e.svc.cluster.local \
+            '*.redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-3.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-3.redis-e2e.svc.cluster.local'
+    - apply:
+        file: redis.yaml
+    - assert:
+        timeout: 10m
+        file: assert-ready.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster put redis-cluster:e2e:cluster:v1 1000 cluster-pass-123
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster check redis-cluster:e2e:cluster:v1 1000 cluster-pass-123
+
+  - name: scale-out
+    try:
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-cluster --type=merge -p '{"spec":{"cluster":{"shards":4}}}'
+    - assert:
+        timeout: 15m
+        file: assert-scale-out-status.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster check redis-cluster:e2e:cluster:v1 1000 cluster-pass-123
+
+  - name: scale-in
+    try:
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-cluster --type=merge -p '{"spec":{"cluster":{"shards":3}}}'
+    - assert:
+        timeout: 15m
+        file: assert-scale-in-status.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster check redis-cluster:e2e:cluster:v1 1000 cluster-pass-123

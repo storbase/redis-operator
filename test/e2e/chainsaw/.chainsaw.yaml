@@ -1,0 +1,17 @@
+apiVersion: chainsaw.kyverno.io/v1alpha2
+kind: Configuration
+metadata:
+  name: redis-operator-e2e
+spec:
+  namespace:
+    name: redis-e2e
+  execution:
+    parallel: 1
+    failFast: true
+  timeouts:
+    apply: 30s
+    assert: 2m
+    cleanup: 30s
+    delete: 30s
+    error: 30s
+    exec: 2m
