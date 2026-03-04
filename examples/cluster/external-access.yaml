@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Secret
 metadata:
-  name: redis-cluster-auth
+  name: redis-cluster-external-auth
   namespace: default
 type: Opaque
 stringData:
@@ -10,7 +10,7 @@ stringData:
 apiVersion: redis.storbase.io/v1alpha1
 kind: Redis
 metadata:
-  name: redis-cluster
+  name: redis-cluster-external
   namespace: default
 spec:
   mode: cluster
@@ -18,7 +18,7 @@ spec:
   imagePullPolicy: IfNotPresent
   auth:
     redisPasswordSecretRef:
-      name: redis-cluster-auth
+      name: redis-cluster-external-auth
       key: password
   cluster:
     shards: 3
@@ -28,6 +28,7 @@ spec:
   externalAccess:
     cluster:
       type: NodePort
+      # Replace host/port values with routable addresses and free NodePort values.
       nodes:
       - shard: 0
         ordinal: 0

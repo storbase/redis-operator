@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-failover-auth
+  namespace: default
+type: Opaque
+stringData:
+  redis-password: failover-redis-pass-123
+  sentinel-password: failover-sentinel-pass-123
+---
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-failover
+  namespace: default
+spec:
+  mode: failover
+  image: docker.io/library/redis:8.6.1
+  imagePullPolicy: IfNotPresent
+  auth:
+    redisPasswordSecretRef:
+      name: redis-failover-auth
+      key: redis-password
+    sentinelPasswordSecretRef:
+      name: redis-failover-auth
+      key: sentinel-password
+  failover:
+    redisReplicas: 3
+    sentinelReplicas: 3
+    quorum: 2
+    masterName: mymaster
+    storage:
+      size: 10Gi
