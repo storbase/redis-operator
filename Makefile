@@ -1,5 +1,6 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+LOCALBIN ?= $(shell pwd)/bin
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -14,11 +15,12 @@ endif
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
 HELM ?= helm
+HELM_DOCS ?= $(LOCALBIN)/helm-docs
 CHART_DIR ?= charts/redis-operator
 CHART_CRD_FILE ?= $(CHART_DIR)/crds/redis.storbase.io_redis.yaml
 BASE_CRD_FILE ?= config/crd/bases/redis.storbase.io_redis.yaml
 HELM_PACKAGE_DIR ?= .chart-packages
-HELM_TEMPLATE_KUBE_VERSION ?= 1.35.0
+HELM_TEMPLATE_KUBE_VERSION ?= 1.25.0
 
 E2E_KIND_CLUSTER ?= redis-operator-e2e
 E2E_NAMESPACE ?= redis-e2e
@@ -34,7 +36,7 @@ E2E_ARTIFACT_DIR_LOCAL ?= test/e2e/artifacts/local
 E2E_ARTIFACT_DIR_PR ?= test/e2e/artifacts/pr
 E2E_CLUSTER_DOMAIN ?= cluster.local
 E2E_DNS_PREFLIGHT ?= true
-E2E_KIND_NODE_IMAGE ?= kindest/node:v1.30.0
+E2E_KIND_NODE_IMAGE ?= kindest/node:v1.25.16
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -125,6 +127,17 @@ helm-test: helm-lint helm-verify-crds helm-template ## Run helm chart static che
 helm-package: ## Package redis-operator chart.
 	mkdir -p $(HELM_PACKAGE_DIR)
 	$(HELM) package $(CHART_DIR) --destination $(HELM_PACKAGE_DIR)
+
+.PHONY: helm-docs
+helm-docs: $(HELM_DOCS) ## Generate Helm chart documentation.
+	$(HELM_DOCS) --chart-search-root charts
+
+.PHONY: helm-verify-docs
+helm-verify-docs: helm-docs ## Verify Helm chart documentation is up to date.
+	@git diff --exit-code -- "$(CHART_DIR)/README.md" >/dev/null || { \
+		echo "Error: chart README is out of date. Run 'make helm-docs' and commit the result."; \
+		exit 1; \
+	}
 
 ##@ Build
 
@@ -293,7 +306,6 @@ e2e: e2e-kind-up e2e-check-tools-pr ## Run e2e path with kind + built image + he
 ##@ Dependencies
 
 ## Location to install dependencies to
-LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
@@ -311,9 +323,10 @@ KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
-#ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
-ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
+#ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.25)
+ENVTEST_K8S_VERSION ?= 1.25
 GOLANGCI_LINT_VERSION ?= v2.3.0
+HELM_DOCS_VERSION ?= v1.14.2
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -342,6 +355,9 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+$(HELM_DOCS): $(LOCALBIN)
+	$(call go-install-tool,$(HELM_DOCS),github.com/norwoodj/helm-docs/cmd/helm-docs,$(HELM_DOCS_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
