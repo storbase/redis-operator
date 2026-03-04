@@ -47,13 +47,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
       - name: Setup Helm 4
         uses: azure/setup-helm@v4
         with:
           version: v4.1.1
 
       - name: Validate chart
-        run: make helm-test
+        run: |
+          make helm-test
+          make helm-verify-docs
 
   envtest:
     name: Envtest

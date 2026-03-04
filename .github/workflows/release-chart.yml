@@ -6,7 +6,7 @@ on:
       - "chart-v*"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -19,30 +19,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - name: Setup Helm 4
         uses: azure/setup-helm@v4
         with:
           version: v4.1.1
 
-      - name: Validate chart version against git tag
-        run: |
-          set -euo pipefail
-          chart_version="$(helm show chart "$CHART_DIR" | awk '/^version:/{print $2; exit}')"
-          expected_tag="chart-v${chart_version}"
-          if [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
-            echo "Tag '$GITHUB_REF_NAME' does not match chart version '$chart_version' (expected '$expected_tag')."
-            exit 1
-          fi
+      - name: Fetch tags
+        run: git fetch --force --tags origin
 
-      - name: Helm lint
-        run: helm lint "$CHART_DIR"
+      - name: Validate chart release metadata
+        run: ./hack/release/verify-chart-release.sh "${GITHUB_REF_NAME}"
+
+      - name: Run chart checks
+        run: |
+          make helm-test
+          make helm-verify-docs
 
       - name: Package chart
+        id: package
         run: |
           set -euo pipefail
           mkdir -p .chart-packages
           helm package "$CHART_DIR" --destination .chart-packages
+          chart_archive="$(ls .chart-packages/redis-operator-*.tgz)"
+          echo "chart_archive=${chart_archive}" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         run: |
@@ -55,5 +63,13 @@ jobs:
         run: |
           set -euo pipefail
           owner_lc="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
-          chart_archive="$(ls .chart-packages/redis-operator-*.tgz)"
-          helm push "$chart_archive" "oci://${REGISTRY_HOST}/${owner_lc}/charts"
+          helm push "${{ steps.package.outputs.chart_archive }}" "oci://${REGISTRY_HOST}/${owner_lc}/charts"
+
+      - name: Create Chart GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: redis-operator chart ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.chart_archive }}

@@ -22,7 +22,6 @@ Deploy and operate Redis on Kubernetes with one `Redis` CRD in two modes:
 
 ```bash
 helm upgrade --install redis-operator oci://ghcr.io/storbase/charts/redis-operator \
-  --version 0.1.0 \
   --namespace redis-operator-system \
   --create-namespace
 ```
@@ -53,12 +52,20 @@ helm uninstall redis-operator --namespace redis-operator-system
 CRDs are shipped from `charts/redis-operator/crds`, which Helm installs on first install.
 Helm does not upgrade or delete CRDs from this directory.
 
-To upgrade CRDs, apply them manually before chart upgrade:
+To upgrade CRDs, apply them manually before chart upgrade.
+Find the latest operator tag and chart version from the GitHub Releases page:
+
+- <https://github.com/storbase/redis-operator/releases>
+
+Then run:
 
 ```bash
-OPERATOR_VERSION=v0.1.0
-kubectl apply -f https://raw.githubusercontent.com/storbase/redis-operator/${OPERATOR_VERSION}/config/crd/bases/redis.storbase.io_redis.yaml
+OPERATOR_TAG=<latest-operator-tag>
+CHART_VERSION=<latest-chart-version>
+
+kubectl apply -f https://raw.githubusercontent.com/storbase/redis-operator/${OPERATOR_TAG}/config/crd/bases/redis.storbase.io_redis.yaml
 helm upgrade redis-operator oci://ghcr.io/storbase/charts/redis-operator \
+  --version "${CHART_VERSION}" \
   --namespace redis-operator-system
 ```
 

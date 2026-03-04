@@ -1,0 +1,57 @@
+name: Tag Chart On Main
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - charts/redis-operator/Chart.yaml
+
+permissions:
+  contents: write
+
+jobs:
+  tag-chart:
+    name: Create Chart Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag chart version
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+
+          chart_version="$(awk '$1 == "version:" { print $2; exit }' charts/redis-operator/Chart.yaml)"
+          app_version="$(awk -F': *' '$1 == "appVersion" { gsub(/"/, "", $2); print $2; exit }' charts/redis-operator/Chart.yaml)"
+
+          if [[ ! "$chart_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: invalid chart version '$chart_version'."
+            exit 1
+          fi
+
+          expected_operator_tag="v${chart_version}"
+          if [ "$app_version" != "$expected_operator_tag" ]; then
+            echo "Error: appVersion '$app_version' must equal '$expected_operator_tag'."
+            exit 1
+          fi
+
+          if ! git rev-parse -q --verify "refs/tags/${expected_operator_tag}" >/dev/null; then
+            echo "Error: missing operator tag '${expected_operator_tag}'."
+            exit 1
+          fi
+
+          chart_tag="chart-v${chart_version}"
+          if git rev-parse -q --verify "refs/tags/${chart_tag}" >/dev/null; then
+            echo "Chart tag '${chart_tag}' already exists."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$chart_tag" -m "Release chart ${chart_tag}"
+          git push origin "$chart_tag"
