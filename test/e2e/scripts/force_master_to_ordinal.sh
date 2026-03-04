@@ -111,6 +111,19 @@ normalize_redis_host_to_pod() {
   return 1
 }
 
+flag_contains() {
+  local flags="$1"
+  local expected="$2"
+  case ",${flags}," in
+    *",${expected},"*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 query_replication_field() {
   local pod="$1"
   local field="$2"
@@ -118,6 +131,109 @@ query_replication_field() {
   host="$(redis_pod_host "$pod")"
   kubectl -n "$namespace" exec "$pod" -- redis-cli "${redis_tls_flags[@]}" -h "$host" -p 6379 "${redis_cli_auth[@]}" --raw INFO replication 2>/dev/null \
     | sed -n "s/^${field}://p" | tr -d '\r' | head -n1 || true
+}
+
+sentinel_target_replica_flags() {
+  local sentinel_pod="$1"
+  local sentinel_host
+  sentinel_host="$(sentinel_pod_host "$sentinel_pod")"
+  local raw
+  raw="$(kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${sentinel_tls_flags[@]}" -h "$sentinel_host" -p 26379 "${sentinel_cli_auth[@]}" --raw SENTINEL replicas "$master_name" 2>/dev/null || true)"
+  raw="$(trim_cr "$raw")"
+  if [ -z "$raw" ]; then
+    return 1
+  fi
+
+  local target_host
+  target_host="$(redis_pod_host "$target_pod")"
+  local target_name="${target_host}:6379"
+
+  local key=""
+  local current_name=""
+  while IFS= read -r line; do
+    case "$key" in
+      name)
+        current_name="$line"
+        ;;
+      flags)
+        if [ "$current_name" = "$target_name" ] || [ "$current_name" = "$target_host" ]; then
+          printf '%s' "$line"
+          return 0
+        fi
+        ;;
+    esac
+    key="$line"
+  done <<EOF
+$raw
+EOF
+  return 1
+}
+
+wait_for_target_replica_ready_for_failover() {
+  local timeout="$1"
+  local start=$SECONDS
+  local last_role=""
+  local last_link=""
+  local last_master=""
+  local last_sentinel_diag=""
+
+  while true; do
+    last_role="$(query_replication_field "$target_pod" "role")"
+    last_link="$(query_replication_field "$target_pod" "master_link_status")"
+
+    local sentinels_ready=true
+    local ordinal
+    local diag_lines=()
+    for ordinal in $(seq 0 $((expected_sentinel - 1))); do
+      local pod
+      pod="$(sentinel_pod_name "$ordinal")"
+      local flags
+      flags="$(sentinel_target_replica_flags "$pod" || true)"
+      if [ -z "$flags" ]; then
+        sentinels_ready=false
+        diag_lines+=("${pod} => target replica not discovered")
+        continue
+      fi
+      if ! flag_contains "$flags" "slave" && ! flag_contains "$flags" "replica"; then
+        sentinels_ready=false
+        diag_lines+=("${pod} => flags=${flags} (not replica)")
+        continue
+      fi
+      if flag_contains "$flags" "s_down" || flag_contains "$flags" "o_down" || flag_contains "$flags" "disconnected"; then
+        sentinels_ready=false
+        diag_lines+=("${pod} => flags=${flags} (down/disconnected)")
+        continue
+      fi
+      diag_lines+=("${pod} => flags=${flags}")
+    done
+    last_sentinel_diag="$(printf '%s\n' "${diag_lines[@]}")"
+
+    last_master="$(detect_actual_master_once || true)"
+    collect_sentinel_consensus
+    local master_aligned=false
+    if [ -n "$last_master" ] && [ "$last_master" = "$sentinel_consensus_pod" ] && [ "$sentinel_consensus_votes" -ge "$quorum" ]; then
+      master_aligned=true
+    fi
+
+    if { [ "$last_role" = "slave" ] || [ "$last_role" = "replica" ]; } \
+      && [ "$last_link" = "up" ] \
+      && [ "$sentinels_ready" = "true" ] \
+      && [ "$master_aligned" = "true" ]; then
+      echo "target replica is ready for failover: ${target_pod} role=${last_role} link=${last_link} current_master=${last_master}"
+      return 0
+    fi
+
+    if [ $((SECONDS - start)) -ge "$timeout" ]; then
+      echo "timeout waiting target replica readiness before manual failover: ${target_pod}"
+      echo "target replication status: role=${last_role:-<empty>} master_link_status=${last_link:-<empty>}"
+      echo "actual master: ${last_master:-<none>}"
+      echo "sentinel consensus: ${sentinel_consensus_pod:-<none>} votes=${sentinel_consensus_votes}/${expected_sentinel} quorum=${quorum}"
+      echo "target replica visibility:"
+      printf '%s\n' "$last_sentinel_diag"
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 detect_actual_master_once() {
@@ -310,6 +426,8 @@ if [ "$current_master" = "$target_pod" ]; then
     exit 0
   fi
 fi
+
+wait_for_target_replica_ready_for_failover 240
 
 for ordinal in $(seq 0 $((expected_redis - 1))); do
   pod="$(redis_pod_name "$ordinal")"
