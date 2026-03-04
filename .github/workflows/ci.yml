@@ -86,6 +86,7 @@ jobs:
           - cluster
           - failover
           - failover-external
+          - cluster-external
     timeout-minutes: 40
     steps:
       - name: Checkout
