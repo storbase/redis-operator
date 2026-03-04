@@ -104,7 +104,7 @@ func validateExternalAccess(redis *redisv1alpha1.Redis) error {
 func validateFailoverExternalAccess(redis *redisv1alpha1.Redis) error {
 	failover := redis.Spec.ExternalAccess.Failover
 	if failover == nil {
-		return fmt.Errorf("spec.externalAccess.failover must be set when spec.externalAccess is configured in Failover mode")
+		return fmt.Errorf("spec.externalAccess.failover must be set when spec.externalAccess is configured in failover mode")
 	}
 	if redis.Spec.Failover == nil {
 		return fmt.Errorf("spec.failover must be set when spec.externalAccess.failover is configured")
@@ -124,7 +124,7 @@ func validateFailoverExternalAccess(redis *redisv1alpha1.Redis) error {
 func validateClusterExternalAccess(redis *redisv1alpha1.Redis) error {
 	clusterExternal := redis.Spec.ExternalAccess.Cluster
 	if clusterExternal == nil {
-		return fmt.Errorf("spec.externalAccess.cluster must be set when spec.externalAccess is configured in Cluster mode")
+		return fmt.Errorf("spec.externalAccess.cluster must be set when spec.externalAccess is configured in cluster mode")
 	}
 	if redis.Spec.Cluster == nil {
 		return fmt.Errorf("spec.cluster must be set when spec.externalAccess.cluster is configured")

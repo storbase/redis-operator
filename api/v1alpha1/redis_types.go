@@ -26,9 +26,9 @@ type RedisMode string
 
 const (
 	// RedisModeCluster deploys Redis Cluster topology.
-	RedisModeCluster RedisMode = "Cluster"
+	RedisModeCluster RedisMode = "cluster"
 	// RedisModeFailover deploys Redis + Sentinel failover topology.
-	RedisModeFailover RedisMode = "Failover"
+	RedisModeFailover RedisMode = "failover"
 )
 
 // ExternalAccessType declares how services are exposed out of cluster.
@@ -251,8 +251,8 @@ type ExporterSpec struct {
 
 // RedisSpec defines the desired state of Redis.
 type RedisSpec struct {
-	// Mode selects Cluster or Failover topology.
-	// +kubebuilder:validation:Enum=Cluster;Failover
+	// Mode selects cluster or failover topology.
+	// +kubebuilder:validation:Enum=cluster;failover
 	Mode RedisMode `json:"mode"`
 
 	// Image is a full image reference, for example docker.io/library/redis:8.6.1.
@@ -323,10 +323,10 @@ type RedisStatus struct {
 // +kubebuilder:printcolumn:name="InternalEndpoint",type=string,JSONPath=`.status.endpoints.internal[0].host`
 // +kubebuilder:printcolumn:name="Health",type=boolean,JSONPath=`.status.health`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
-// +kubebuilder:validation:XValidation:rule="(self.spec.mode == 'Cluster' && has(self.spec.cluster) && !has(self.spec.failover)) || (self.spec.mode == 'Failover' && has(self.spec.failover) && !has(self.spec.cluster))",message="mode and sub-spec must match exactly one"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.sentinelConfig) || size(self.spec.sentinelConfig) == 0",message="sentinelConfig is only allowed in Failover mode"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover)",message="externalAccess.failover is only allowed in Failover mode"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Cluster' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)",message="externalAccess.cluster is only allowed in Cluster mode"
+// +kubebuilder:validation:XValidation:rule="(self.spec.mode == 'cluster' && has(self.spec.cluster) && !has(self.spec.failover)) || (self.spec.mode == 'failover' && has(self.spec.failover) && !has(self.spec.cluster))",message="mode and sub-spec must match exactly one"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'failover' || !has(self.spec.sentinelConfig) || size(self.spec.sentinelConfig) == 0",message="sentinelConfig is only allowed in failover mode"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'failover' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover)",message="externalAccess.failover is only allowed in failover mode"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'cluster' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)",message="externalAccess.cluster is only allowed in cluster mode"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !(has(self.spec.externalAccess.failover) && has(self.spec.externalAccess.cluster))",message="externalAccess.failover and externalAccess.cluster are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover) || self.spec.externalAccess.failover.type == 'NodePort'",message="externalAccess.failover.type must be NodePort in this release"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster) || self.spec.externalAccess.cluster.type == 'NodePort'",message="externalAccess.cluster.type must be NodePort in this release"

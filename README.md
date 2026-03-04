@@ -2,8 +2,8 @@
 
 A Kubernetes operator that deploys Redis in one CRD with two modes:
 
-- `Cluster`: shard-based Redis Cluster (`1 StatefulSet = 1 shard`)
-- `Failover`: Redis + Sentinel (`2 StatefulSets`)
+- `cluster`: shard-based Redis Cluster (`1 StatefulSet = 1 shard`)
+- `failover`: Redis + Sentinel (`2 StatefulSets`)
 
 ## Highlights
 

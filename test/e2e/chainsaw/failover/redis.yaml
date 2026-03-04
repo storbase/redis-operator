@@ -14,7 +14,7 @@ metadata:
   name: redis-failover
   namespace: redis-e2e
 spec:
-  mode: Failover
+  mode: failover
   image: docker.io/library/redis:8.6.1
   imagePullPolicy: IfNotPresent
   tls:

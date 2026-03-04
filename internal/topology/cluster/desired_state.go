@@ -13,13 +13,13 @@ import (
 // BuildDesiredState renders Kubernetes objects for Cluster mode.
 func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alpha1.EndpointStatus, error) {
 	if redis.Spec.Cluster == nil {
-		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.cluster must be set when mode is Cluster")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.cluster must be set when mode is cluster")
 	}
 	if redis.Spec.Failover != nil {
-		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.failover must not be set when mode is Cluster")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.failover must not be set when mode is cluster")
 	}
 	if len(cfg.NormalizeUserLines(redis.Spec.SentinelConfig)) > 0 {
-		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.sentinelConfig is only valid in Failover mode")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.sentinelConfig is only valid in failover mode")
 	}
 
 	userRedisConfig := cfg.NormalizeUserLines(redis.Spec.RedisConfig)

@@ -4024,10 +4024,10 @@ spec:
                 - Never
                 type: string
               mode:
-                description: Mode selects Cluster or Failover topology.
+                description: Mode selects cluster or failover topology.
                 enum:
-                - Cluster
-                - Failover
+                - cluster
+                - failover
                 type: string
               redisConfig:
                 description: RedisConfig accepts one Redis directive per line.
@@ -4224,16 +4224,16 @@ spec:
         type: object
         x-kubernetes-validations:
         - message: mode and sub-spec must match exactly one
-          rule: (self.spec.mode == 'Cluster' && has(self.spec.cluster) && !has(self.spec.failover))
-            || (self.spec.mode == 'Failover' && has(self.spec.failover) && !has(self.spec.cluster))
-        - message: sentinelConfig is only allowed in Failover mode
-          rule: self.spec.mode == 'Failover' || !has(self.spec.sentinelConfig) ||
+          rule: (self.spec.mode == 'cluster' && has(self.spec.cluster) && !has(self.spec.failover))
+            || (self.spec.mode == 'failover' && has(self.spec.failover) && !has(self.spec.cluster))
+        - message: sentinelConfig is only allowed in failover mode
+          rule: self.spec.mode == 'failover' || !has(self.spec.sentinelConfig) ||
             size(self.spec.sentinelConfig) == 0
-        - message: externalAccess.failover is only allowed in Failover mode
-          rule: self.spec.mode == 'Failover' || !has(self.spec.externalAccess) ||
+        - message: externalAccess.failover is only allowed in failover mode
+          rule: self.spec.mode == 'failover' || !has(self.spec.externalAccess) ||
             !has(self.spec.externalAccess.failover)
-        - message: externalAccess.cluster is only allowed in Cluster mode
-          rule: self.spec.mode == 'Cluster' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)
+        - message: externalAccess.cluster is only allowed in cluster mode
+          rule: self.spec.mode == 'cluster' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)
         - message: externalAccess.failover and externalAccess.cluster are mutually
             exclusive
           rule: '!has(self.spec.externalAccess) || !(has(self.spec.externalAccess.failover)

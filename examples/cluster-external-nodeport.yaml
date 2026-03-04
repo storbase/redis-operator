@@ -13,7 +13,7 @@ metadata:
   name: redis-cluster
   namespace: default
 spec:
-  mode: Cluster
+  mode: cluster
   image: docker.io/library/redis:8.6.1
   imagePullPolicy: IfNotPresent
   auth:

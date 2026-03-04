@@ -13,10 +13,10 @@ import (
 // BuildDesiredState renders Kubernetes objects for Failover mode.
 func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alpha1.EndpointStatus, error) {
 	if redis.Spec.Failover == nil {
-		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.failover must be set when mode is Failover")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.failover must be set when mode is failover")
 	}
 	if redis.Spec.Cluster != nil {
-		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.cluster must not be set when mode is Failover")
+		return nil, redisv1alpha1.EndpointStatus{}, fmt.Errorf("spec.cluster must not be set when mode is failover")
 	}
 
 	userRedisConfig := cfg.NormalizeUserLines(redis.Spec.RedisConfig)
