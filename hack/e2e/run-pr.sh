@@ -27,7 +27,7 @@ for raw_suite in "${suites[@]}"; do
     continue
   fi
   case "$suite" in
-    cluster|failover|failover-external)
+    cluster|cluster-external|failover|failover-external)
       chainsaw_suite_dirs+=(--test-dir "${chainsaw_dir}/${suite}")
       ;;
     *)
@@ -38,7 +38,7 @@ for raw_suite in "${suites[@]}"; do
 done
 
 if [ "${#chainsaw_suite_dirs[@]}" -eq 0 ]; then
-  echo "E2E_CHAINSAW_SUITES must include at least one suite (cluster, failover, failover-external)" >&2
+  echo "E2E_CHAINSAW_SUITES must include at least one suite (cluster, cluster-external, failover, failover-external)" >&2
   exit 1
 fi
 

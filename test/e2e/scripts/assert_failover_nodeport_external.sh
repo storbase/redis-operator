@@ -110,6 +110,45 @@ trim_cr() {
   printf '%s' "$value" | tr -d '\r'
 }
 
+run_external_redis_raw() {
+  local host="$1"
+  local port="$2"
+  shift 2
+  kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "$host" -p "$port" "${redis_cli_auth[@]}" --raw "$@" 2>/dev/null || true
+}
+
+assert_external_set_get() {
+  local host="$1"
+  local port="$2"
+  local key="$3"
+  local value="$4"
+  local set_output
+  set_output="$(trim_cr "$(run_external_redis_raw "$host" "$port" SET "$key" "$value")")"
+  if [ "$set_output" != "OK" ]; then
+    echo "external SET failed: endpoint=$(canonical_endpoint "$host" "$port") key=$key output=${set_output:-<empty>}"
+    exit 1
+  fi
+  local get_output
+  get_output="$(trim_cr "$(run_external_redis_raw "$host" "$port" GET "$key")")"
+  if [ "$get_output" != "$value" ]; then
+    echo "external GET mismatch: endpoint=$(canonical_endpoint "$host" "$port") key=$key expected=$value actual=${get_output:-<empty>}"
+    exit 1
+  fi
+}
+
+assert_external_get_equals() {
+  local host="$1"
+  local port="$2"
+  local key="$3"
+  local expected="$4"
+  local actual
+  actual="$(trim_cr "$(run_external_redis_raw "$host" "$port" GET "$key")")"
+  if [ "$actual" != "$expected" ]; then
+    echo "external GET mismatch: endpoint=$(canonical_endpoint "$host" "$port") key=$key expected=$expected actual=${actual:-<empty>}"
+    exit 1
+  fi
+}
+
 redis_pod_name() {
   local ordinal="$1"
   echo "${name}-redis-${ordinal}"
@@ -259,6 +298,11 @@ if ! kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flag
   exit 1
 fi
 
+rw_token="$(date +%s)-$$"
+rw_key="failover-external:e2e:data:${rw_token}"
+rw_value_before="value-before-${rw_token}"
+assert_external_set_get "$master_host" "$master_port" "$rw_key" "$rw_value_before"
+
 pause_duration_ms="$(compute_pause_duration_ms)"
 echo "pausing current external master via CLIENT PAUSE: ordinal=${current_ordinal} duration_ms=${pause_duration_ms}"
 inject_master_pause "$current_ordinal" "$pause_duration_ms"
@@ -267,6 +311,16 @@ deadline=$((SECONDS + 420))
 while true; do
   next_master="$(fetch_master_endpoint || true)"
   if [ -n "$next_master" ] && [ "$next_master" != "$current_master" ] && contains_endpoint "$next_master" "${expected_redis_endpoints[@]}"; then
+    next_host_port="$(split_endpoint "$next_master")"
+    next_master_host="${next_host_port%%|*}"
+    next_master_port="${next_host_port##*|}"
+    if ! kubectl -n "$namespace" exec "$sentinel_pod" -- redis-cli "${redis_tls_flags[@]}" -h "${next_master_host}" -p "${next_master_port}" "${redis_cli_auth[@]}" PING >/dev/null 2>&1; then
+      echo "cannot connect to next external master endpoint: ${next_master}"
+      exit 1
+    fi
+    assert_external_get_equals "$next_master_host" "$next_master_port" "$rw_key" "$rw_value_before"
+    rw_value_after="value-after-${rw_token}"
+    assert_external_set_get "$next_master_host" "$next_master_port" "${rw_key}:after" "$rw_value_after"
     echo "nodeport external failover assertions passed: old=${current_master} new=${next_master}"
     exit 0
   fi

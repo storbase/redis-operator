@@ -205,8 +205,30 @@ type FailoverExternalAccessSpec struct {
 	Redis    FailoverExternalAccessNodeSet `json:"redis"`
 }
 
-// ClusterExternalAccessSpec is reserved for future cluster external exposure.
-type ClusterExternalAccessSpec struct{}
+// ClusterExternalNodeAddress represents one cluster external endpoint mapped to shard+ordinal.
+type ClusterExternalNodeAddress struct {
+	// +kubebuilder:validation:Minimum=0
+	Shard int32 `json:"shard"`
+
+	// +kubebuilder:validation:Minimum=0
+	Ordinal int32 `json:"ordinal"`
+
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	BusPort int32 `json:"busPort"`
+
+	ExternalAddress `json:",inline"`
+}
+
+// ClusterExternalAccessSpec configures cluster external exposure.
+type ClusterExternalAccessSpec struct {
+	// +kubebuilder:validation:Enum=NodePort;LoadBalancer
+	Type ExternalAccessType `json:"type"`
+
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=768
+	Nodes []ClusterExternalNodeAddress `json:"nodes"`
+}
 
 // ExternalAccessSpec configures external service exposure.
 type ExternalAccessSpec struct {
@@ -304,8 +326,10 @@ type RedisStatus struct {
 // +kubebuilder:validation:XValidation:rule="(self.spec.mode == 'Cluster' && has(self.spec.cluster) && !has(self.spec.failover)) || (self.spec.mode == 'Failover' && has(self.spec.failover) && !has(self.spec.cluster))",message="mode and sub-spec must match exactly one"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.sentinelConfig) || size(self.spec.sentinelConfig) == 0",message="sentinelConfig is only allowed in Failover mode"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Failover' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover)",message="externalAccess.failover is only allowed in Failover mode"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)",message="externalAccess.cluster is reserved and not implemented in this release"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'Cluster' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)",message="externalAccess.cluster is only allowed in Cluster mode"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !(has(self.spec.externalAccess.failover) && has(self.spec.externalAccess.cluster))",message="externalAccess.failover and externalAccess.cluster are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover) || self.spec.externalAccess.failover.type == 'NodePort'",message="externalAccess.failover.type must be NodePort in this release"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster) || self.spec.externalAccess.cluster.type == 'NodePort'",message="externalAccess.cluster.type must be NodePort in this release"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.failover) || self.spec.failover.quorum <= self.spec.failover.sentinelReplicas",message="failover.quorum must be <= failover.sentinelReplicas"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == oldSelf.spec.mode",message="mode is immutable"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec.cluster) || !has(self.spec.cluster) || self.spec.cluster.shards == oldSelf.spec.cluster.shards || self.spec.cluster.shards == oldSelf.spec.cluster.shards + 1 || self.spec.cluster.shards == oldSelf.spec.cluster.shards - 1",message="cluster.shards can only change by 1 per update"

@@ -401,6 +401,12 @@ func (r *RedisReconciler) cleanupRemovedClusterShardResources(
 	}
 
 	for ordinal := int32(0); ordinal <= redis.Spec.Cluster.ReplicasPerShard; ordinal++ {
+		externalServiceName := fmt.Sprintf("%s-shard-%d-external-%d", redis.Name, shard, ordinal)
+		externalService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: externalServiceName, Namespace: redis.Namespace}}
+		if err := r.Client.Delete(ctx, externalService); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete external service %s failed: %w", externalServiceName, err)
+		}
+
 		pvcName := fmt.Sprintf("data-%s-%d", stsName, ordinal)
 		pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: redis.Namespace}}
 		if err := r.Client.Delete(ctx, pvc); err != nil && !apierrors.IsNotFound(err) {

@@ -248,6 +248,180 @@ func TestReconcileFailoverWithExternalAccessCreatesNodePortServices(t *testing.T
 	}
 }
 
+func TestReconcileClusterWithExternalAccessCreatesNodePortServices(t *testing.T) {
+	name := fmt.Sprintf("cluster-external-%d", time.Now().UnixNano())
+	obj := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode:  redisv1alpha1.RedisModeCluster,
+			Image: "docker.io/library/redis:8.6.1",
+			Cluster: &redisv1alpha1.ClusterSpec{
+				Shards:           2,
+				ReplicasPerShard: 1,
+			},
+			ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+				Cluster: &redisv1alpha1.ClusterExternalAccessSpec{
+					Type: redisv1alpha1.ExternalAccessTypeNodePort,
+					Nodes: []redisv1alpha1.ClusterExternalNodeAddress{
+						{
+							Shard:   0,
+							Ordinal: 0,
+							ExternalAddress: redisv1alpha1.ExternalAddress{
+								Host: "10.0.0.10",
+								Port: 32300,
+							},
+							BusPort: 32400,
+						},
+						{
+							Shard:   0,
+							Ordinal: 1,
+							ExternalAddress: redisv1alpha1.ExternalAddress{
+								Host: "10.0.0.10",
+								Port: 32301,
+							},
+							BusPort: 32401,
+						},
+						{
+							Shard:   1,
+							Ordinal: 0,
+							ExternalAddress: redisv1alpha1.ExternalAddress{
+								Host: "10.0.0.11",
+								Port: 32310,
+							},
+							BusPort: 32410,
+						},
+						{
+							Shard:   1,
+							Ordinal: 1,
+							ExternalAddress: redisv1alpha1.ExternalAddress{
+								Host: "10.0.0.11",
+								Port: 32311,
+							},
+							BusPort: 32411,
+						},
+					},
+				},
+			},
+		},
+	}
+	mustCreateRedis(t, obj)
+
+	admin := &trackingAdminClient{}
+	r := newTestReconcilerWithAdmin(admin)
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
+	firstResult, err := r.Reconcile(testCtx, req)
+	if err != nil {
+		t.Fatalf("first reconcile failed: %v", err)
+	}
+	if firstResult.RequeueAfter != runtimePrerequisitesRequeueAfter {
+		t.Fatalf("unexpected first requeue delay: got %s want %s", firstResult.RequeueAfter, runtimePrerequisitesRequeueAfter)
+	}
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-shard-0", name))
+	mustMarkStatefulSetReady(t, "default", fmt.Sprintf("%s-shard-1", name))
+	if _, err := r.Reconcile(testCtx, req); err != nil {
+		t.Fatalf("second reconcile failed: %v", err)
+	}
+
+	type expectedService struct {
+		name            string
+		redisNodePort   int32
+		clusterBusPort  int32
+		expectedPodName string
+	}
+	expectations := []expectedService{
+		{name: fmt.Sprintf("%s-shard-0-external-0", name), redisNodePort: 32300, clusterBusPort: 32400, expectedPodName: fmt.Sprintf("%s-shard-0-0", name)},
+		{name: fmt.Sprintf("%s-shard-0-external-1", name), redisNodePort: 32301, clusterBusPort: 32401, expectedPodName: fmt.Sprintf("%s-shard-0-1", name)},
+		{name: fmt.Sprintf("%s-shard-1-external-0", name), redisNodePort: 32310, clusterBusPort: 32410, expectedPodName: fmt.Sprintf("%s-shard-1-0", name)},
+		{name: fmt.Sprintf("%s-shard-1-external-1", name), redisNodePort: 32311, clusterBusPort: 32411, expectedPodName: fmt.Sprintf("%s-shard-1-1", name)},
+	}
+	for _, current := range expectations {
+		svc := &corev1.Service{}
+		if err := k8sClient.Get(testCtx, client.ObjectKey{Namespace: "default", Name: current.name}, svc); err != nil {
+			t.Fatalf("cluster external service %s not found: %v", current.name, err)
+		}
+		if svc.Spec.Type != corev1.ServiceTypeNodePort {
+			t.Fatalf("expected cluster external service %s to be NodePort", current.name)
+		}
+		if len(svc.Spec.Ports) != 2 {
+			t.Fatalf("expected cluster external service %s to have 2 ports, got %d", current.name, len(svc.Spec.Ports))
+		}
+		if svc.Spec.Ports[0].NodePort != current.redisNodePort {
+			t.Fatalf("unexpected redis nodePort on %s: got %d want %d", current.name, svc.Spec.Ports[0].NodePort, current.redisNodePort)
+		}
+		if svc.Spec.Ports[1].NodePort != current.clusterBusPort {
+			t.Fatalf("unexpected bus nodePort on %s: got %d want %d", current.name, svc.Spec.Ports[1].NodePort, current.clusterBusPort)
+		}
+		if got := svc.Spec.Selector["statefulset.kubernetes.io/pod-name"]; got != current.expectedPodName {
+			t.Fatalf("unexpected pod selector on %s: got %q want %q", current.name, got, current.expectedPodName)
+		}
+	}
+
+	fetched := mustGetRedis(t, obj)
+	if len(fetched.Status.Endpoints.External) != 2 {
+		t.Fatalf("expected 2 external endpoints, got %d", len(fetched.Status.Endpoints.External))
+	}
+	if fetched.Status.Endpoints.External[0].Port != 32300 {
+		t.Fatalf("unexpected first external endpoint port: got %d want %d", fetched.Status.Endpoints.External[0].Port, 32300)
+	}
+	if fetched.Status.Endpoints.External[1].Port != 32310 {
+		t.Fatalf("unexpected second external endpoint port: got %d want %d", fetched.Status.Endpoints.External[1].Port, 32310)
+	}
+}
+
+func TestCleanupRemovedClusterShardResourcesDeletesExternalServices(t *testing.T) {
+	name := fmt.Sprintf("cluster-cleanup-%d", time.Now().UnixNano())
+	redis := &redisv1alpha1.Redis{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: redisv1alpha1.RedisSpec{
+			Mode: redisv1alpha1.RedisModeCluster,
+			Cluster: &redisv1alpha1.ClusterSpec{
+				Shards:           2,
+				ReplicasPerShard: 1,
+			},
+		},
+	}
+	mustCreateRedis(t, redis)
+
+	for index, svcName := range []string{
+		fmt.Sprintf("%s-shard-1-external-0", name),
+		fmt.Sprintf("%s-shard-1-external-1", name),
+	} {
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      svcName,
+				Namespace: "default",
+			},
+			Spec: corev1.ServiceSpec{
+				Type: corev1.ServiceTypeNodePort,
+				Ports: []corev1.ServicePort{{
+					Name:     "redis",
+					Port:     6379,
+					NodePort: int32(32600 + index),
+				}},
+			},
+		}
+		if err := k8sClient.Create(testCtx, svc); err != nil {
+			t.Fatalf("create external service %s failed: %v", svcName, err)
+		}
+	}
+
+	r := newTestReconciler()
+	if err := r.cleanupRemovedClusterShardResources(testCtx, redis, 1); err != nil {
+		t.Fatalf("cleanupRemovedClusterShardResources failed: %v", err)
+	}
+
+	for _, svcName := range []string{
+		fmt.Sprintf("%s-shard-1-external-0", name),
+		fmt.Sprintf("%s-shard-1-external-1", name),
+	} {
+		svc := &corev1.Service{}
+		err := k8sClient.Get(testCtx, client.ObjectKey{Namespace: "default", Name: svcName}, svc)
+		if !apierrors.IsNotFound(err) {
+			t.Fatalf("expected external service %s to be deleted, got err=%v", svcName, err)
+		}
+	}
+}
+
 func TestReconcileRejectsReservedDirective(t *testing.T) {
 	name := fmt.Sprintf("invalid-%d", time.Now().UnixNano())
 	obj := &redisv1alpha1.Redis{

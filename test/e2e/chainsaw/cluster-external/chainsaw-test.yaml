@@ -1,0 +1,40 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: redis-cluster-external-nodeport
+spec:
+  steps:
+  - name: apply-and-verify-cluster-external
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-cluster-tls \
+            redis-cluster.redis-e2e.svc.cluster.local \
+            '*.redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-2.redis-e2e.svc.cluster.local'
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          node_ip="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"
+          if [ -z "$node_ip" ]; then
+            echo "failed to resolve node internal ip"
+            exit 1
+          fi
+          sed "s/__NODE_IP__/${node_ip}/g" redis.yaml | kubectl apply -f -
+    - assert:
+        timeout: 10m
+        file: assert-ready.yaml
+    - script:
+        timeout: 12m
+        content: |
+          set -eu
+          bash ../../scripts/assert_cluster_nodeport_external.sh redis-e2e redis-cluster cluster-pass-123

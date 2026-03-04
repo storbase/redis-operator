@@ -1421,8 +1421,55 @@ spec:
                 description: ExternalAccessSpec configures external service exposure.
                 properties:
                   cluster:
-                    description: ClusterExternalAccessSpec is reserved for future
-                      cluster external exposure.
+                    description: ClusterExternalAccessSpec configures cluster external
+                      exposure.
+                    properties:
+                      nodes:
+                        items:
+                          description: ClusterExternalNodeAddress represents one cluster
+                            external endpoint mapped to shard+ordinal.
+                          properties:
+                            busPort:
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            host:
+                              minLength: 1
+                              type: string
+                            ordinal:
+                              format: int32
+                              minimum: 0
+                              type: integer
+                            port:
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            shard:
+                              format: int32
+                              minimum: 0
+                              type: integer
+                          required:
+                          - busPort
+                          - host
+                          - ordinal
+                          - port
+                          - shard
+                          type: object
+                        maxItems: 768
+                        minItems: 1
+                        type: array
+                      type:
+                        description: ExternalAccessType declares how services are
+                          exposed out of cluster.
+                        enum:
+                        - NodePort
+                        - LoadBalancer
+                        type: string
+                    required:
+                    - nodes
+                    - type
                     type: object
                   failover:
                     description: FailoverExternalAccessSpec configures failover external
@@ -4185,12 +4232,18 @@ spec:
         - message: externalAccess.failover is only allowed in Failover mode
           rule: self.spec.mode == 'Failover' || !has(self.spec.externalAccess) ||
             !has(self.spec.externalAccess.failover)
-        - message: externalAccess.cluster is reserved and not implemented in this
-            release
-          rule: '!has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)'
+        - message: externalAccess.cluster is only allowed in Cluster mode
+          rule: self.spec.mode == 'Cluster' || !has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)
+        - message: externalAccess.failover and externalAccess.cluster are mutually
+            exclusive
+          rule: '!has(self.spec.externalAccess) || !(has(self.spec.externalAccess.failover)
+            && has(self.spec.externalAccess.cluster))'
         - message: externalAccess.failover.type must be NodePort in this release
           rule: '!has(self.spec.externalAccess) || !has(self.spec.externalAccess.failover)
             || self.spec.externalAccess.failover.type == ''NodePort'''
+        - message: externalAccess.cluster.type must be NodePort in this release
+          rule: '!has(self.spec.externalAccess) || !has(self.spec.externalAccess.cluster)
+            || self.spec.externalAccess.cluster.type == ''NodePort'''
         - message: failover.quorum must be <= failover.sentinelReplicas
           rule: '!has(self.spec.failover) || self.spec.failover.quorum <= self.spec.failover.sentinelReplicas'
         - message: mode is immutable

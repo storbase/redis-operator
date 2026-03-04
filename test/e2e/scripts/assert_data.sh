@@ -7,6 +7,8 @@ action="${3:-check}"
 key_prefix="${4:-${name}:e2e:cluster:v1}"
 key_count="${5:-1000}"
 redis_password="${6:-}"
+seed_host_override="${7:-}"
+seed_port_override="${8:-6379}"
 
 if [ "$action" != "put" ] && [ "$action" != "check" ]; then
   echo "unsupported action: $action (expected put|check)"
@@ -20,6 +22,17 @@ fi
 
 seed_pod="${name}-shard-0-0"
 seed_host="${seed_pod}.${name}-shard-0.${namespace}.svc.cluster.local"
+seed_port="6379"
+
+if [ -n "$seed_host_override" ]; then
+  seed_host="$seed_host_override"
+  seed_port="$seed_port_override"
+fi
+
+if ! [[ "$seed_port" =~ ^[0-9]+$ ]] || [ "$seed_port" -le 0 ] || [ "$seed_port" -gt 65535 ]; then
+  echo "invalid seed_port: $seed_port"
+  exit 1
+fi
 
 tls_secret="$(kubectl -n "$namespace" get redis "$name" -o jsonpath='{.spec.tls.secretName}' 2>/dev/null || true)"
 use_tls="0"
@@ -33,6 +46,7 @@ run_in_pod() {
   local script="$1"
   kubectl -n "$namespace" exec "$seed_pod" -- env \
     SEED_HOST="$seed_host" \
+    SEED_PORT="$seed_port" \
     KEY_PREFIX="$key_prefix" \
     KEY_COUNT="$key_count" \
     REDIS_PASSWORD="$redis_password" \
@@ -44,7 +58,7 @@ if [ "$action" = "put" ]; then
   run_in_pod '
     set -euo pipefail
 
-    redis_base=(redis-cli -c -h "$SEED_HOST" -p 6379 --raw)
+    redis_base=(redis-cli -c -h "$SEED_HOST" -p "$SEED_PORT" --raw)
     if [ "$USE_TLS" = "1" ]; then
       redis_base+=(--tls --cacert /etc/redis-tls/ca.crt)
     fi
@@ -94,7 +108,7 @@ fi
 run_in_pod '
   set -euo pipefail
 
-  redis_base=(redis-cli -c -h "$SEED_HOST" -p 6379 --raw)
+  redis_base=(redis-cli -c -h "$SEED_HOST" -p "$SEED_PORT" --raw)
   if [ "$USE_TLS" = "1" ]; then
     redis_base+=(--tls --cacert /etc/redis-tls/ca.crt)
   fi

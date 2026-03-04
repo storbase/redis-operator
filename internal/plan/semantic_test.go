@@ -155,3 +155,149 @@ func TestValidateSemanticRejectsExternalAccessPortRange(t *testing.T) {
 		t.Fatalf("expected nodePort range validation error")
 	}
 }
+
+func TestValidateSemanticAcceptsClusterExternalNodePort(t *testing.T) {
+	obj := &redisv1alpha1.Redis{Spec: redisv1alpha1.RedisSpec{
+		Mode: redisv1alpha1.RedisModeCluster,
+		Cluster: &redisv1alpha1.ClusterSpec{
+			Shards:           2,
+			ReplicasPerShard: 1,
+		},
+		ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+			Cluster: &redisv1alpha1.ClusterExternalAccessSpec{
+				Type:  redisv1alpha1.ExternalAccessTypeNodePort,
+				Nodes: buildClusterExternalNodes(2, 1),
+			},
+		},
+	}}
+	if err := ValidateSemantic(obj); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSemanticRejectsClusterExternalLengthMismatch(t *testing.T) {
+	nodes := buildClusterExternalNodes(2, 1)
+	obj := &redisv1alpha1.Redis{Spec: redisv1alpha1.RedisSpec{
+		Mode: redisv1alpha1.RedisModeCluster,
+		Cluster: &redisv1alpha1.ClusterSpec{
+			Shards:           2,
+			ReplicasPerShard: 1,
+		},
+		ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+			Cluster: &redisv1alpha1.ClusterExternalAccessSpec{
+				Type:  redisv1alpha1.ExternalAccessTypeNodePort,
+				Nodes: nodes[:len(nodes)-1],
+			},
+		},
+	}}
+	if err := ValidateSemantic(obj); err == nil {
+		t.Fatalf("expected length mismatch error")
+	}
+}
+
+func TestValidateSemanticRejectsClusterExternalDuplicateShardOrdinal(t *testing.T) {
+	nodes := buildClusterExternalNodes(2, 1)
+	nodes[3] = nodes[0]
+	obj := &redisv1alpha1.Redis{Spec: redisv1alpha1.RedisSpec{
+		Mode: redisv1alpha1.RedisModeCluster,
+		Cluster: &redisv1alpha1.ClusterSpec{
+			Shards:           2,
+			ReplicasPerShard: 1,
+		},
+		ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+			Cluster: &redisv1alpha1.ClusterExternalAccessSpec{
+				Type:  redisv1alpha1.ExternalAccessTypeNodePort,
+				Nodes: nodes,
+			},
+		},
+	}}
+	if err := ValidateSemantic(obj); err == nil {
+		t.Fatalf("expected duplicate shard/ordinal error")
+	}
+}
+
+func TestValidateSemanticRejectsClusterExternalPortConflicts(t *testing.T) {
+	nodes := buildClusterExternalNodes(2, 1)
+	nodes[1].Port = nodes[0].BusPort
+	obj := &redisv1alpha1.Redis{Spec: redisv1alpha1.RedisSpec{
+		Mode: redisv1alpha1.RedisModeCluster,
+		Cluster: &redisv1alpha1.ClusterSpec{
+			Shards:           2,
+			ReplicasPerShard: 1,
+		},
+		ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+			Cluster: &redisv1alpha1.ClusterExternalAccessSpec{
+				Type:  redisv1alpha1.ExternalAccessTypeNodePort,
+				Nodes: nodes,
+			},
+		},
+	}}
+	if err := ValidateSemantic(obj); err == nil {
+		t.Fatalf("expected global port conflict error")
+	}
+}
+
+func TestValidateSemanticRejectsClusterExternalPortEqualsBusPort(t *testing.T) {
+	nodes := buildClusterExternalNodes(1, 1)
+	nodes[0].BusPort = nodes[0].Port
+	obj := &redisv1alpha1.Redis{Spec: redisv1alpha1.RedisSpec{
+		Mode: redisv1alpha1.RedisModeCluster,
+		Cluster: &redisv1alpha1.ClusterSpec{
+			Shards:           1,
+			ReplicasPerShard: 1,
+		},
+		ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+			Cluster: &redisv1alpha1.ClusterExternalAccessSpec{
+				Type:  redisv1alpha1.ExternalAccessTypeNodePort,
+				Nodes: nodes,
+			},
+		},
+	}}
+	if err := ValidateSemantic(obj); err == nil {
+		t.Fatalf("expected port/busPort mismatch validation error")
+	}
+}
+
+func TestValidateSemanticRejectsMutuallyExclusiveExternalModes(t *testing.T) {
+	obj := &redisv1alpha1.Redis{Spec: redisv1alpha1.RedisSpec{
+		Mode: redisv1alpha1.RedisModeCluster,
+		Cluster: &redisv1alpha1.ClusterSpec{
+			Shards:           1,
+			ReplicasPerShard: 0,
+		},
+		ExternalAccess: &redisv1alpha1.ExternalAccessSpec{
+			Failover: &redisv1alpha1.FailoverExternalAccessSpec{
+				Type: redisv1alpha1.ExternalAccessTypeNodePort,
+			},
+			Cluster: &redisv1alpha1.ClusterExternalAccessSpec{
+				Type:  redisv1alpha1.ExternalAccessTypeNodePort,
+				Nodes: buildClusterExternalNodes(1, 0),
+			},
+		},
+	}}
+	if err := ValidateSemantic(obj); err == nil {
+		t.Fatalf("expected mutually exclusive external access error")
+	}
+}
+
+func buildClusterExternalNodes(shards, replicasPerShard int32) []redisv1alpha1.ClusterExternalNodeAddress {
+	result := make([]redisv1alpha1.ClusterExternalNodeAddress, 0, shards*(replicasPerShard+1))
+	clientPort := int32(32000)
+	busPort := int32(32500)
+	for shard := int32(0); shard < shards; shard++ {
+		for ordinal := int32(0); ordinal <= replicasPerShard; ordinal++ {
+			result = append(result, redisv1alpha1.ClusterExternalNodeAddress{
+				Shard:   shard,
+				Ordinal: ordinal,
+				ExternalAddress: redisv1alpha1.ExternalAddress{
+					Host: "10.0.0.10",
+					Port: clientPort,
+				},
+				BusPort: busPort,
+			})
+			clientPort++
+			busPort++
+		}
+	}
+	return result
+}

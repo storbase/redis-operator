@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-cluster-auth
+  namespace: default
+type: Opaque
+stringData:
+  password: cluster-pass-123
+---
+apiVersion: redis.storbase.io/v1alpha1
+kind: Redis
+metadata:
+  name: redis-cluster
+  namespace: default
+spec:
+  mode: Cluster
+  image: docker.io/library/redis:8.6.1
+  imagePullPolicy: IfNotPresent
+  auth:
+    redisPasswordSecretRef:
+      name: redis-cluster-auth
+      key: password
+  cluster:
+    shards: 3
+    replicasPerShard: 1
+    storage:
+      size: 10Gi
+  externalAccess:
+    cluster:
+      type: NodePort
+      nodes:
+      - shard: 0
+        ordinal: 0
+        host: 10.0.0.10
+        port: 32090
+        busPort: 32190
+      - shard: 0
+        ordinal: 1
+        host: 10.0.0.10
+        port: 32091
+        busPort: 32191
+      - shard: 1
+        ordinal: 0
+        host: 10.0.0.10
+        port: 32092
+        busPort: 32192
+      - shard: 1
+        ordinal: 1
+        host: 10.0.0.10
+        port: 32093
+        busPort: 32193
+      - shard: 2
+        ordinal: 0
+        host: 10.0.0.10
+        port: 32094
+        busPort: 32194
+      - shard: 2
+        ordinal: 1
+        host: 10.0.0.10
+        port: 32095
+        busPort: 32195

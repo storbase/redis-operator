@@ -86,15 +86,25 @@ func validateExternalAccess(redis *redisv1alpha1.Redis) error {
 	if redis.Spec.ExternalAccess == nil {
 		return nil
 	}
-	if redis.Spec.ExternalAccess.Cluster != nil {
-		return fmt.Errorf("spec.externalAccess.cluster is reserved and not implemented in this release")
+
+	if redis.Spec.ExternalAccess.Failover != nil && redis.Spec.ExternalAccess.Cluster != nil {
+		return fmt.Errorf("spec.externalAccess.failover and spec.externalAccess.cluster are mutually exclusive")
 	}
+
+	switch redis.Spec.Mode {
+	case redisv1alpha1.RedisModeFailover:
+		return validateFailoverExternalAccess(redis)
+	case redisv1alpha1.RedisModeCluster:
+		return validateClusterExternalAccess(redis)
+	default:
+		return nil
+	}
+}
+
+func validateFailoverExternalAccess(redis *redisv1alpha1.Redis) error {
 	failover := redis.Spec.ExternalAccess.Failover
 	if failover == nil {
-		return fmt.Errorf("spec.externalAccess.failover must be set when spec.externalAccess is configured")
-	}
-	if redis.Spec.Mode != redisv1alpha1.RedisModeFailover {
-		return fmt.Errorf("spec.externalAccess.failover is only valid in Failover mode")
+		return fmt.Errorf("spec.externalAccess.failover must be set when spec.externalAccess is configured in Failover mode")
 	}
 	if redis.Spec.Failover == nil {
 		return fmt.Errorf("spec.failover must be set when spec.externalAccess.failover is configured")
@@ -107,6 +117,129 @@ func validateExternalAccess(redis *redisv1alpha1.Redis) error {
 	}
 	if err := validateExternalNodeSet("redis", failover.Redis.Nodes, redis.Spec.Failover.RedisReplicas); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateClusterExternalAccess(redis *redisv1alpha1.Redis) error {
+	clusterExternal := redis.Spec.ExternalAccess.Cluster
+	if clusterExternal == nil {
+		return fmt.Errorf("spec.externalAccess.cluster must be set when spec.externalAccess is configured in Cluster mode")
+	}
+	if redis.Spec.Cluster == nil {
+		return fmt.Errorf("spec.cluster must be set when spec.externalAccess.cluster is configured")
+	}
+	if clusterExternal.Type != redisv1alpha1.ExternalAccessTypeNodePort {
+		return fmt.Errorf("spec.externalAccess.cluster.type %q is not implemented; only NodePort is supported", clusterExternal.Type)
+	}
+
+	shards := redis.Spec.Cluster.Shards
+	replicasPerShard := redis.Spec.Cluster.ReplicasPerShard
+	expectedNodes := int(shards * (replicasPerShard + 1))
+	if len(clusterExternal.Nodes) != expectedNodes {
+		return fmt.Errorf(
+			"spec.externalAccess.cluster.nodes must have %d items, got %d",
+			expectedNodes,
+			len(clusterExternal.Nodes),
+		)
+	}
+
+	seen := make(map[string]struct{}, len(clusterExternal.Nodes))
+	usedPorts := make(map[int32]string, len(clusterExternal.Nodes)*2)
+
+	for _, node := range clusterExternal.Nodes {
+		if node.Shard < 0 || node.Shard >= shards {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes shard %d is out of range [0,%d)",
+				node.Shard,
+				shards,
+			)
+		}
+		if node.Ordinal < 0 || node.Ordinal > replicasPerShard {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes shard %d ordinal %d is out of range [0,%d]",
+				node.Shard,
+				node.Ordinal,
+				replicasPerShard,
+			)
+		}
+
+		identity := fmt.Sprintf("%d/%d", node.Shard, node.Ordinal)
+		if _, exists := seen[identity]; exists {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes has duplicate shard/ordinal pair %d/%d",
+				node.Shard,
+				node.Ordinal,
+			)
+		}
+		seen[identity] = struct{}{}
+
+		if err := validateExternalHost(node.Host); err != nil {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes shard %d ordinal %d host %q is invalid: %w",
+				node.Shard,
+				node.Ordinal,
+				node.Host,
+				err,
+			)
+		}
+		if node.Port < minNodePort || node.Port > maxNodePort {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes shard %d ordinal %d port %d must be in [%d,%d]",
+				node.Shard,
+				node.Ordinal,
+				node.Port,
+				minNodePort,
+				maxNodePort,
+			)
+		}
+		if node.BusPort < minNodePort || node.BusPort > maxNodePort {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes shard %d ordinal %d busPort %d must be in [%d,%d]",
+				node.Shard,
+				node.Ordinal,
+				node.BusPort,
+				minNodePort,
+				maxNodePort,
+			)
+		}
+		if node.Port == node.BusPort {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes shard %d ordinal %d must use different values for port and busPort",
+				node.Shard,
+				node.Ordinal,
+			)
+		}
+
+		label := fmt.Sprintf("shard %d ordinal %d", node.Shard, node.Ordinal)
+		if prev, exists := usedPorts[node.Port]; exists {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes %s port %d conflicts with %s",
+				label,
+				node.Port,
+				prev,
+			)
+		}
+		usedPorts[node.Port] = fmt.Sprintf("%s port", label)
+
+		if prev, exists := usedPorts[node.BusPort]; exists {
+			return fmt.Errorf(
+				"spec.externalAccess.cluster.nodes %s busPort %d conflicts with %s",
+				label,
+				node.BusPort,
+				prev,
+			)
+		}
+		usedPorts[node.BusPort] = fmt.Sprintf("%s busPort", label)
+	}
+
+	for shard := int32(0); shard < shards; shard++ {
+		for ordinal := int32(0); ordinal <= replicasPerShard; ordinal++ {
+			identity := fmt.Sprintf("%d/%d", shard, ordinal)
+			if _, ok := seen[identity]; !ok {
+				return fmt.Errorf("spec.externalAccess.cluster.nodes missing shard/ordinal pair %d/%d", shard, ordinal)
+			}
+		}
 	}
 	return nil
 }
