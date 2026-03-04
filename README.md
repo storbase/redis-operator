@@ -16,6 +16,17 @@ Deploy and operate Redis on Kubernetes with one `Redis` CRD in two modes:
 - [x] Supports failover external access with NodePort and Sentinel-native discovery
 - [x] Supports cluster external access with NodePort and native announce settings
 
+## Compatibility
+
+| Component            | Compatibility |
+|----------------------|---------------|
+| Kubernetes (runtime) | `>= 1.25.0`   |
+| Redis                | `>= 7`        |
+
+Notes:
+
+- This project is pre-GA (`v1alpha1`); compatibility may change between minor releases.
+
 ## Install with Helm 4
 
 ### Install from OCI chart (GHCR)

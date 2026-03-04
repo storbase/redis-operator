@@ -8,7 +8,7 @@
 
 ## Requirements
 
-Kubernetes: `>=1.29.0-0`
+Kubernetes: `>=1.25.0-0`
 
 ## Values
 

@@ -20,7 +20,7 @@ CHART_DIR ?= charts/redis-operator
 CHART_CRD_FILE ?= $(CHART_DIR)/crds/redis.storbase.io_redis.yaml
 BASE_CRD_FILE ?= config/crd/bases/redis.storbase.io_redis.yaml
 HELM_PACKAGE_DIR ?= .chart-packages
-HELM_TEMPLATE_KUBE_VERSION ?= 1.35.0
+HELM_TEMPLATE_KUBE_VERSION ?= 1.25.0
 
 E2E_KIND_CLUSTER ?= redis-operator-e2e
 E2E_NAMESPACE ?= redis-e2e
@@ -36,7 +36,7 @@ E2E_ARTIFACT_DIR_LOCAL ?= test/e2e/artifacts/local
 E2E_ARTIFACT_DIR_PR ?= test/e2e/artifacts/pr
 E2E_CLUSTER_DOMAIN ?= cluster.local
 E2E_DNS_PREFLIGHT ?= true
-E2E_KIND_NODE_IMAGE ?= kindest/node:v1.30.0
+E2E_KIND_NODE_IMAGE ?= kindest/node:v1.25.16
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -323,8 +323,8 @@ KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
-#ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
-ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
+#ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.25)
+ENVTEST_K8S_VERSION ?= 1.25
 GOLANGCI_LINT_VERSION ?= v2.3.0
 HELM_DOCS_VERSION ?= v1.14.2
 
