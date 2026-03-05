@@ -1,9 +1,6 @@
 name: Release Operator
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -11,7 +8,7 @@ on:
         required: true
         type: string
       target_ref:
-        description: "Target ref to tag in manual mode"
+        description: "Target ref to tag"
         required: false
         default: main
         type: string
@@ -38,90 +35,68 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_TARGET_REF: ${{ inputs.target_ref || 'main' }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
 
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            raw_version="${INPUT_VERSION}"
-            target_ref="${INPUT_TARGET_REF}"
+          raw_version="${INPUT_VERSION}"
+          target_ref="${INPUT_TARGET_REF}"
 
-            operator_tag="${raw_version}"
-            if [[ ! "$operator_tag" =~ ^v ]]; then
-              operator_tag="v${operator_tag}"
-            fi
-
-            if [[ ! "$operator_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              echo "Error: invalid version '${raw_version}'. Expected stable semver like v0.2.0 or 0.2.0."
-              exit 1
-            fi
-
-            chart_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-
-            git fetch --force --tags origin
-            git fetch --force origin "+refs/heads/*:refs/remotes/origin/*"
-            if git ls-remote --exit-code --tags origin "refs/tags/${operator_tag}" >/dev/null 2>&1; then
-              echo "Error: tag '${operator_tag}' already exists on origin."
-              exit 1
-            fi
-
-            resolved_ref="${target_ref}"
-            if ! git rev-parse --verify --quiet "${resolved_ref}^{commit}" >/dev/null; then
-              if git rev-parse --verify --quiet "origin/${target_ref}^{commit}" >/dev/null; then
-                resolved_ref="origin/${target_ref}"
-              else
-                echo "Error: target_ref '${target_ref}' does not resolve to a commit."
-                exit 1
-              fi
-            fi
-
-            resolved_sha="$(git rev-parse "${resolved_ref}^{commit}")"
-
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "${operator_tag}" "${resolved_sha}" -m "Release ${operator_tag}"
-            if [ -z "${RELEASE_TOKEN:-}" ]; then
-              echo "Error: missing RELEASE_TOKEN secret. Manual dispatch requires a token that can trigger tag workflows."
-              exit 1
-            fi
-            git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            git push origin "refs/tags/${operator_tag}"
-
-            {
-              echo "operator_tag=${operator_tag}"
-              echo "chart_version=${chart_version}"
-            } >> "$GITHUB_OUTPUT"
-
-            {
-              echo "### Manual release dispatch"
-              echo "Created and pushed tag \`${operator_tag}\` from \`${resolved_ref}\` (\`${resolved_sha}\`)."
-              echo "The canonical tag-triggered workflow run will perform the full release pipeline."
-            } >> "$GITHUB_STEP_SUMMARY"
-
-            exit 0
+          operator_tag="${raw_version}"
+          if [[ ! "$operator_tag" =~ ^v ]]; then
+            operator_tag="v${operator_tag}"
           fi
 
-          operator_tag="${GITHUB_REF_NAME}"
           if [[ ! "$operator_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "Error: invalid operator tag '$operator_tag'. Expected stable semver like v0.2.0."
+            echo "Error: invalid version '${raw_version}'. Expected stable semver like v0.2.0 or 0.2.0."
             exit 1
           fi
 
           chart_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+
+          git fetch --force --tags origin
+          git fetch --force origin "+refs/heads/*:refs/remotes/origin/*"
+          if git ls-remote --exit-code --tags origin "refs/tags/${operator_tag}" >/dev/null 2>&1; then
+            echo "Error: tag '${operator_tag}' already exists on origin."
+            exit 1
+          fi
+
+          resolved_ref="${target_ref}"
+          if ! git rev-parse --verify --quiet "${resolved_ref}^{commit}" >/dev/null; then
+            if git rev-parse --verify --quiet "origin/${target_ref}^{commit}" >/dev/null; then
+              resolved_ref="origin/${target_ref}"
+            else
+              echo "Error: target_ref '${target_ref}' does not resolve to a commit."
+              exit 1
+            fi
+          fi
+
+          resolved_sha="$(git rev-parse "${resolved_ref}^{commit}")"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${operator_tag}" "${resolved_sha}" -m "Release ${operator_tag}"
+          git push origin "refs/tags/${operator_tag}"
 
           {
             echo "operator_tag=${operator_tag}"
             echo "chart_version=${chart_version}"
           } >> "$GITHUB_OUTPUT"
 
+          {
+            echo "### Manual release dispatch"
+            echo "Created and pushed tag \`${operator_tag}\` from \`${resolved_ref}\` (\`${resolved_sha}\`)."
+            echo "This workflow run continues to execute the full release pipeline."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   quality-gate:
     name: Quality Gate
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: prepare-tag
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-tag.outputs.operator_tag }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -149,7 +124,6 @@ jobs:
 
   publish-image:
     name: Publish Image
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs:
       - prepare-tag
@@ -157,8 +131,10 @@ jobs:
     env:
       IMAGE_REPO: ghcr.io/storbase/redis-operator
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-tag.outputs.operator_tag }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -183,7 +159,6 @@ jobs:
 
   sync-chart-main:
     name: Sync Chart To Main
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs:
       - prepare-tag
@@ -230,7 +205,6 @@ jobs:
 
   publish-chart:
     name: Publish Helm Chart
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs:
       - prepare-tag
@@ -319,7 +293,6 @@ jobs:
 
   release-github:
     name: Create Operator GitHub Release
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs:
       - prepare-tag
@@ -330,8 +303,10 @@ jobs:
       IMAGE_REPO: ghcr.io/storbase/redis-operator
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-tag.outputs.operator_tag }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -351,7 +326,6 @@ jobs:
             dist/install.yaml
 
       - name: Build Helm chart release note block
-        id: chart-notes
         run: |
           set -euo pipefail
 
