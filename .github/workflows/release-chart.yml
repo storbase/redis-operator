@@ -2,11 +2,13 @@ name: Release Helm Chart
 
 on:
   push:
-    tags:
-      - "chart-v*"
+    branches:
+      - main
+    paths:
+      - charts/redis-operator/Chart.yaml
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -36,40 +38,64 @@ jobs:
         run: git fetch --force --tags origin
 
       - name: Validate chart release metadata
-        run: ./hack/release/verify-chart-release.sh "${GITHUB_REF_NAME}"
-
-      - name: Run chart checks
-        run: |
-          make helm-test
-          make helm-verify-docs
-
-      - name: Package chart
-        id: package
-        run: |
-          set -euo pipefail
-          mkdir -p .chart-packages
-          helm package "$CHART_DIR" --destination .chart-packages
-          chart_archive="$(ls .chart-packages/redis-operator-*.tgz)"
-          echo "chart_archive=${chart_archive}" >> "$GITHUB_OUTPUT"
+        run: ./hack/release/verify-chart-release.sh
 
       - name: Login to GHCR
         run: |
           set -euo pipefail
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login "$REGISTRY_HOST" --username "${{ github.actor }}" --password-stdin
 
-      - name: Push chart
+      - name: Resolve chart metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          chart_name="$(awk '$1 == "name:" { print $2; exit }' "${CHART_DIR}/Chart.yaml")"
+          chart_version="$(awk '$1 == "version:" { print $2; exit }' "${CHART_DIR}/Chart.yaml")"
+          if [ -z "$chart_name" ] || [ -z "$chart_version" ]; then
+            echo "Error: failed to parse chart name/version from ${CHART_DIR}/Chart.yaml."
+            exit 1
+          fi
+          echo "chart_name=${chart_name}" >> "$GITHUB_OUTPUT"
+          echo "chart_version=${chart_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Check chart version in GHCR
+        id: exists
         env:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           owner_lc="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
-          helm push "${{ steps.package.outputs.chart_archive }}" "oci://${REGISTRY_HOST}/${owner_lc}/charts"
+          chart_ref="oci://${REGISTRY_HOST}/${owner_lc}/charts/${{ steps.metadata.outputs.chart_name }}"
+          if helm show chart "$chart_ref" --version "${{ steps.metadata.outputs.chart_version }}" >/dev/null 2>&1; then
+            echo "Chart version ${{ steps.metadata.outputs.chart_version }} already exists in ${chart_ref}. Skip publishing."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "chart_ref=${chart_ref}" >> "$GITHUB_OUTPUT"
 
-      - name: Create Chart GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: redis-operator chart ${{ github.ref_name }}
-          generate_release_notes: true
-          files: |
-            ${{ steps.package.outputs.chart_archive }}
+      - name: Run chart checks
+        if: steps.exists.outputs.exists != 'true'
+        run: |
+          make helm-test
+          make helm-verify-docs
+
+      - name: Package chart
+        if: steps.exists.outputs.exists != 'true'
+        id: package
+        run: |
+          set -euo pipefail
+          mkdir -p .chart-packages
+          helm package "$CHART_DIR" --destination .chart-packages
+          chart_archive=".chart-packages/${{ steps.metadata.outputs.chart_name }}-${{ steps.metadata.outputs.chart_version }}.tgz"
+          if [ ! -f "$chart_archive" ]; then
+            echo "Error: expected chart archive '$chart_archive' is missing."
+            exit 1
+          fi
+          echo "chart_archive=${chart_archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Push chart
+        if: steps.exists.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          helm push "${{ steps.package.outputs.chart_archive }}" "${{ steps.exists.outputs.chart_ref }}"
