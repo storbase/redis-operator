@@ -38,6 +38,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_TARGET_REF: ${{ inputs.target_ref || 'main' }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -79,6 +80,11 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "${operator_tag}" "${resolved_sha}" -m "Release ${operator_tag}"
+            if [ -z "${RELEASE_TOKEN:-}" ]; then
+              echo "Error: missing RELEASE_TOKEN secret. Manual dispatch requires a token that can trigger tag workflows."
+              exit 1
+            fi
+            git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
             git push origin "refs/tags/${operator_tag}"
 
             {
