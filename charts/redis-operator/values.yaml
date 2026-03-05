@@ -3,7 +3,7 @@ fullnameOverride: ""
 
 image:
   repository: ghcr.io/storbase/redis-operator
-  tag: v0.1.1
+  tag: v0.1.2
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
