@@ -22,7 +22,7 @@ Kubernetes: `>=1.25.0-0`
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"ghcr.io/storbase/redis-operator"` |  |
-| image.tag | string | `"v0.1.2"` |  |
+| image.tag | string | `"v0.1.3"` |  |
 | imagePullSecrets | list | `[]` |  |
 | metrics.service.enabled | bool | `true` |  |
 | metrics.service.port | int | `8443` |  |
