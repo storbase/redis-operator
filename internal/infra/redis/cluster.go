@@ -232,9 +232,9 @@ func (c *AdminClient) observeClusterInfo(
 		}
 		return appinterfaces.ClusterObservation{
 			State:         fields["cluster_state"],
-			ClusterSize:   int32(clusterSize),
-			KnownNodes:    int32(knownNodes),
-			SlotsAssigned: int32(slotsAssigned),
+			ClusterSize:   clusterSize,
+			KnownNodes:    knownNodes,
+			SlotsAssigned: slotsAssigned,
 		}, nil
 	}
 	if lastErr != nil {
