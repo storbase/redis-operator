@@ -91,7 +91,10 @@ jobs:
       matrix:
         suite:
           - cluster
+          - cluster-scale
           - failover
+          - failover-switch
+          - failover-scale
           - failover-external
           - cluster-external
     timeout-minutes: 40

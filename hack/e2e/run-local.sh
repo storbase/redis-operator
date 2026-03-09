@@ -6,7 +6,7 @@ namespace="${E2E_NAMESPACE:?E2E_NAMESPACE is required}"
 artifact_dir="${E2E_ARTIFACT_DIR_LOCAL:?E2E_ARTIFACT_DIR_LOCAL is required}"
 chainsaw_dir="${E2E_CHAINSAW_DIR:?E2E_CHAINSAW_DIR is required}"
 chainsaw_config="${E2E_CHAINSAW_CONFIG:?E2E_CHAINSAW_CONFIG is required}"
-chainsaw_suites="${E2E_CHAINSAW_SUITES:-cluster,failover}"
+chainsaw_suites="${E2E_CHAINSAW_SUITES:-cluster,cluster-scale,failover,failover-switch,failover-scale}"
 chainsaw_skip_delete="${E2E_CHAINSAW_SKIP_DELETE:-true}"
 chainsaw_report_name="${E2E_CHAINSAW_REPORT_NAME:-chainsaw-local}"
 cluster_domain="${E2E_CLUSTER_DOMAIN:-cluster.local}"
@@ -35,7 +35,7 @@ for raw_suite in "${suites[@]}"; do
     continue
   fi
   case "$suite" in
-    cluster|cluster-external|failover|failover-external)
+    cluster|cluster-scale|cluster-external|failover|failover-switch|failover-scale|failover-external)
       chainsaw_suite_dirs+=(--test-dir "${chainsaw_dir}/${suite}")
       ;;
     *)
@@ -46,7 +46,7 @@ for raw_suite in "${suites[@]}"; do
 done
 
 if [ "${#chainsaw_suite_dirs[@]}" -eq 0 ]; then
-  echo "E2E_CHAINSAW_SUITES must include at least one suite (cluster, cluster-external, failover, failover-external)" >&2
+  echo "E2E_CHAINSAW_SUITES must include at least one suite (cluster, cluster-scale, cluster-external, failover, failover-switch, failover-scale, failover-external)" >&2
   exit 1
 fi
 
