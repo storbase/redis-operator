@@ -28,10 +28,11 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alph
 	if redis.Spec.TLS != nil {
 		tlsSecretName = redis.Spec.TLS.SecretName
 	}
+	redisConfig := manifests.RenderRedisConfig(redisv1alpha1.RedisModeCluster, userRedisConfig, tlsEnabled)
 
 	configName := fmt.Sprintf("%s-redis-config", redis.Name)
 	redisCM := manifests.NewConfigMap(configName, redis.Namespace, manifests.BaseLabels(redis), map[string]string{
-		"redis.conf": manifests.RenderRedisConfig(redisv1alpha1.RedisModeCluster, userRedisConfig, tlsEnabled),
+		"redis.conf": redisConfig,
 	})
 
 	objects := []client.Object{redisCM}
@@ -66,6 +67,7 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alph
 			Storage:       redis.Spec.Cluster.Storage,
 			Command:       manifests.RenderClusterRedisCommand(clusterExternalNodesForShard(clusterExternalByShardOrdinal, i, replicas)),
 			ConfigMapName: configName,
+			ConfigData:    redisConfig,
 			TLSSecretName: tlsSecretName,
 		})
 		objects = append(objects, redisSTS)

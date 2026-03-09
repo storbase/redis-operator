@@ -710,9 +710,25 @@ func (t *trackingAdminClient) ObserveCluster(_ context.Context, _, _ string) (ap
 	return appinterfaces.ClusterObservation{}, nil
 }
 
+func (t *trackingAdminClient) ObserveClusterShards(_ context.Context, _, _ string) ([]appinterfaces.ClusterShardObservation, error) {
+	return nil, nil
+}
+
+func (t *trackingAdminClient) RequestClusterFailover(_ context.Context, _, _ string, _, _ int32) error {
+	return nil
+}
+
 func (t *trackingAdminClient) HealFailover(_ context.Context, _, _ string) error {
 	t.failoverCalls++
 	return t.failoverErr
+}
+
+func (t *trackingAdminClient) ObserveFailover(_ context.Context, _, _ string) (appinterfaces.FailoverObservation, error) {
+	return appinterfaces.FailoverObservation{}, nil
+}
+
+func (t *trackingAdminClient) RequestFailover(_ context.Context, _, _ string) error {
+	return nil
 }
 
 type stubKubernetesClient struct {

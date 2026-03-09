@@ -22,6 +22,8 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -137,6 +139,31 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
+	switch redis.Spec.Mode {
+	case redisv1alpha1.RedisModeCluster:
+		scalingHandled, scalingResult := r.reconcileClusterScaling(ctx, redis)
+		if scalingHandled {
+			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
+				return ctrl.Result{}, patchErr
+			}
+			return scalingResult, nil
+		}
+	}
+
+	rollingHandled, rollingResult, err := r.reconcileRollingUpdate(ctx, redis)
+	if err != nil {
+		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
+			return ctrl.Result{}, patchErr
+		}
+		return ctrl.Result{}, err
+	}
+	if rollingHandled {
+		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
+			return ctrl.Result{}, patchErr
+		}
+		return rollingResult, nil
+	}
+
 	runtimeReady, waitReason, err := r.runtimePrerequisitesReady(ctx, redis)
 	if err != nil {
 		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, err.Error())
@@ -156,13 +183,6 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	switch redis.Spec.Mode {
 	case redisv1alpha1.RedisModeCluster:
-		scalingHandled, scalingResult := r.reconcileClusterScaling(ctx, redis)
-		if scalingHandled {
-			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-				return ctrl.Result{}, patchErr
-			}
-			return scalingResult, nil
-		}
 		if err := clusterTopology.HealRuntime(ctx, r.RedisAdmin, redis.Namespace, redis.Name); err != nil {
 			log.Error(err, "cluster bootstrap failed")
 			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonClusterCheckFailed, err.Error())
@@ -379,6 +399,9 @@ func (r *RedisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1alpha1.Redis{}).
+		Owns(&appsv1.StatefulSet{}).
+		Owns(&corev1.Pod{}).
+		Owns(&batchv1.Job{}).
 		Named("redis").
 		Complete(r)
 }

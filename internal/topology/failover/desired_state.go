@@ -26,6 +26,7 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alph
 	if redis.Spec.TLS != nil {
 		tlsSecretName = redis.Spec.TLS.SecretName
 	}
+	redisConfig := manifests.RenderRedisConfig(redisv1alpha1.RedisModeFailover, userRedisConfig, tlsEnabled)
 
 	masterName := redis.Spec.Failover.MasterName
 	if masterName == "" {
@@ -57,17 +58,18 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alph
 	}
 
 	redisCM := manifests.NewConfigMap(redisConfigName, redis.Namespace, manifests.BaseLabels(redis), map[string]string{
-		"redis.conf": manifests.RenderRedisConfig(redisv1alpha1.RedisModeFailover, userRedisConfig, tlsEnabled),
+		"redis.conf": redisConfig,
 	})
+	sentinelConfig := manifests.RenderSentinelConfig(
+		masterName,
+		masterEndpoint.Host,
+		masterEndpoint.Port,
+		redis.Spec.Failover.Quorum,
+		userSentinelConfig,
+		tlsEnabled,
+	)
 	sentinelCM := manifests.NewConfigMap(sentinelConfigName, redis.Namespace, manifests.BaseLabels(redis), map[string]string{
-		"sentinel.conf": manifests.RenderSentinelConfig(
-			masterName,
-			masterEndpoint.Host,
-			masterEndpoint.Port,
-			redis.Spec.Failover.Quorum,
-			userSentinelConfig,
-			tlsEnabled,
-		),
+		"sentinel.conf": sentinelConfig,
 	})
 
 	redisLabels := manifests.LabelsFor(redis, "redis", "")
@@ -86,6 +88,7 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alph
 		Storage:       redis.Spec.Failover.Storage,
 		Command:       manifests.RenderFailoverRedisCommand(masterHost, failoverExternalRedisNodes(failoverExternal)),
 		ConfigMapName: redisConfigName,
+		ConfigData:    redisConfig,
 		TLSSecretName: tlsSecretName,
 	})
 
@@ -99,6 +102,7 @@ func BuildDesiredState(redis *redisv1alpha1.Redis) ([]client.Object, redisv1alph
 		Policy:              redis.Spec.Failover.SentinelPod,
 		MasterName:          masterName,
 		ConfigMapName:       sentinelConfigName,
+		ConfigData:          sentinelConfig,
 		RedisPasswordRef:    redis.Spec.Auth.RedisPasswordSecretRef,
 		SentinelPasswordRef: redis.Spec.Auth.SentinelPasswordSecretRef,
 		Image:               redis.Spec.Image,
