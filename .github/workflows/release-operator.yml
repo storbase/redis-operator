@@ -26,7 +26,7 @@ jobs:
       chart_version: ${{ steps.prepare.outputs.chart_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -94,7 +94,7 @@ jobs:
     needs: prepare-tag
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-tag.outputs.operator_tag }}
 
@@ -132,7 +132,7 @@ jobs:
       IMAGE_REPO: ghcr.io/storbase/redis-operator
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-tag.outputs.operator_tag }}
 
@@ -168,7 +168,7 @@ jobs:
       chart_sync_commit_sha: ${{ steps.sync.outputs.chart_sync_commit_sha }}
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
@@ -218,7 +218,7 @@ jobs:
       REGISTRY_HOST: ghcr.io
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
@@ -304,7 +304,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-tag.outputs.operator_tag }}
 
