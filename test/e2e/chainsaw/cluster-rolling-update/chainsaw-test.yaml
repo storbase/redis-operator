@@ -1,0 +1,86 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: redis-cluster-rolling-update
+spec:
+  steps:
+  - name: apply-and-seed-cluster
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-cluster-tls \
+            redis-cluster.redis-e2e.svc.cluster.local \
+            '*.redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            '*.redis-cluster-shard-3.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-0.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-1.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-2.redis-e2e.svc.cluster.local' \
+            'redis-cluster-shard-3.redis-e2e.svc.cluster.local'
+    - apply:
+        file: ../cluster/redis.yaml
+    - assert:
+        timeout: 10m
+        file: ../cluster/assert-ready.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster put redis-cluster:e2e:rolling:v1 200 cluster-pass-123
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          kubectl -n redis-e2e get pods -l 'app.kubernetes.io/instance=redis-cluster,app.kubernetes.io/component=redis' \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.metadata.uid}{"\n"}{end}' | sort >/tmp/redis-cluster-rolling.before
+
+  - name: trigger-and-verify-cluster-rolling-update
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-cluster --type=merge -p '{"spec":{"redisConfig":["save 300 10"]}}'
+    - assert:
+        timeout: 15m
+        file: ../cluster/assert-ready.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_data.sh redis-e2e redis-cluster count redis-cluster:e2e:rolling:v1 200 cluster-pass-123
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+
+          before_file=/tmp/redis-cluster-rolling.before
+          after_file=/tmp/redis-cluster-rolling.after
+
+          kubectl -n redis-e2e get pods -l 'app.kubernetes.io/instance=redis-cluster,app.kubernetes.io/component=redis' \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.metadata.uid}{"\n"}{end}' | sort >"$after_file"
+
+          before_count="$(wc -l <"$before_file" | tr -d " ")"
+          after_count="$(wc -l <"$after_file" | tr -d " ")"
+          if [ "$before_count" != "$after_count" ]; then
+            echo "cluster pod count changed unexpectedly: before=${before_count} after=${after_count}"
+            exit 1
+          fi
+
+          while IFS='=' read -r pod_name before_uid; do
+            [ -n "$pod_name" ] || continue
+            after_uid="$(awk -F= -v target="$pod_name" '$1 == target {print $2}' "$after_file")"
+            if [ -z "$after_uid" ]; then
+              echo "missing cluster pod after rollout: ${pod_name}"
+              exit 1
+            fi
+            if [ "$after_uid" = "$before_uid" ]; then
+              echo "cluster pod was not recreated: ${pod_name}"
+              exit 1
+            fi
+          done <"$before_file"
