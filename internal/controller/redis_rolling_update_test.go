@@ -16,8 +16,9 @@ import (
 )
 
 func TestReconcileRollingUpdateFailoverDeletesReplicaBeforeMaster(t *testing.T) {
+	const namespace = "default"
 	redis := &redisv1alpha1.Redis{
-		ObjectMeta: metav1.ObjectMeta{Name: "sample", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "sample", Namespace: namespace},
 		Spec: redisv1alpha1.RedisSpec{
 			Mode: redisv1alpha1.RedisModeFailover,
 			Failover: &redisv1alpha1.FailoverSpec{
@@ -28,10 +29,10 @@ func TestReconcileRollingUpdateFailoverDeletesReplicaBeforeMaster(t *testing.T) 
 		},
 	}
 	selector := map[string]string{"app": "redis", "component": "redis"}
-	sts := newRolloutStatefulSet("sample-redis", "default", selector, 3, "rev-old", "rev-new")
-	pod0 := newReadyRolloutPod("sample-redis-0", "default", selector, "rev-old")
-	pod1 := newReadyRolloutPod("sample-redis-1", "default", selector, "rev-old")
-	pod2 := newReadyRolloutPod("sample-redis-2", "default", selector, "rev-old")
+	sts := newRolloutStatefulSet("sample-redis", namespace, selector, 3, "rev-old", "rev-new")
+	pod0 := newReadyRolloutPod("sample-redis-0", selector, "rev-old")
+	pod1 := newReadyRolloutPod("sample-redis-1", selector, "rev-old")
+	pod2 := newReadyRolloutPod("sample-redis-2", selector, "rev-old")
 
 	admin := &rollingAdminClient{
 		failoverObservation: appinterfaces.FailoverObservation{
@@ -61,10 +62,10 @@ func TestReconcileRollingUpdateFailoverDeletesReplicaBeforeMaster(t *testing.T) 
 		t.Fatalf("unexpected failover switchover call count: got %d want 0", admin.requestFailoverCalls)
 	}
 
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "sample-redis-2"}, &corev1.Pod{}); err == nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: "sample-redis-2"}, &corev1.Pod{}); err == nil {
 		t.Fatalf("expected highest-ordinal replica pod to be deleted first")
 	}
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "sample-redis-0"}, &corev1.Pod{}); err != nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: "sample-redis-0"}, &corev1.Pod{}); err != nil {
 		t.Fatalf("expected master pod to remain before replica rollout completes: %v", err)
 	}
 	if redis.Status.Reason != redisv1alpha1.ReasonRollingUpdate {
@@ -73,8 +74,9 @@ func TestReconcileRollingUpdateFailoverDeletesReplicaBeforeMaster(t *testing.T) 
 }
 
 func TestReconcileRollingUpdateFailoverSwitchesMasterBeforeDelete(t *testing.T) {
+	const namespace = "default"
 	redis := &redisv1alpha1.Redis{
-		ObjectMeta: metav1.ObjectMeta{Name: "sample", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "sample", Namespace: namespace},
 		Spec: redisv1alpha1.RedisSpec{
 			Mode: redisv1alpha1.RedisModeFailover,
 			Failover: &redisv1alpha1.FailoverSpec{
@@ -85,10 +87,10 @@ func TestReconcileRollingUpdateFailoverSwitchesMasterBeforeDelete(t *testing.T) 
 		},
 	}
 	selector := map[string]string{"app": "redis", "component": "redis"}
-	sts := newRolloutStatefulSet("sample-redis", "default", selector, 3, "rev-old", "rev-new")
-	pod0 := newReadyRolloutPod("sample-redis-0", "default", selector, "rev-old")
-	pod1 := newReadyRolloutPod("sample-redis-1", "default", selector, "rev-new")
-	pod2 := newReadyRolloutPod("sample-redis-2", "default", selector, "rev-new")
+	sts := newRolloutStatefulSet("sample-redis", namespace, selector, 3, "rev-old", "rev-new")
+	pod0 := newReadyRolloutPod("sample-redis-0", selector, "rev-old")
+	pod1 := newReadyRolloutPod("sample-redis-1", selector, "rev-new")
+	pod2 := newReadyRolloutPod("sample-redis-2", selector, "rev-new")
 
 	admin := &rollingAdminClient{
 		failoverObservation: appinterfaces.FailoverObservation{
@@ -114,7 +116,7 @@ func TestReconcileRollingUpdateFailoverSwitchesMasterBeforeDelete(t *testing.T) 
 	if admin.requestFailoverCalls != 1 {
 		t.Fatalf("unexpected failover switchover call count: got %d want 1", admin.requestFailoverCalls)
 	}
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "sample-redis-0"}, &corev1.Pod{}); err != nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: "sample-redis-0"}, &corev1.Pod{}); err != nil {
 		t.Fatalf("expected old master pod to stay until switchover completes: %v", err)
 	}
 
@@ -135,14 +137,15 @@ func TestReconcileRollingUpdateFailoverSwitchesMasterBeforeDelete(t *testing.T) 
 	if !handled {
 		t.Fatalf("expected rolling update to delete former master after switchover")
 	}
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "sample-redis-0"}, &corev1.Pod{}); err == nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: "sample-redis-0"}, &corev1.Pod{}); err == nil {
 		t.Fatalf("expected former master pod to be deleted after switchover converged")
 	}
 }
 
 func TestReconcileRollingUpdateClusterDeletesReplicaBeforePrimaryAndPrefersUpdatedTarget(t *testing.T) {
+	const namespace = "default"
 	redis := &redisv1alpha1.Redis{
-		ObjectMeta: metav1.ObjectMeta{Name: "sample", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "sample", Namespace: namespace},
 		Spec: redisv1alpha1.RedisSpec{
 			Mode: redisv1alpha1.RedisModeCluster,
 			Cluster: &redisv1alpha1.ClusterSpec{
@@ -152,10 +155,10 @@ func TestReconcileRollingUpdateClusterDeletesReplicaBeforePrimaryAndPrefersUpdat
 		},
 	}
 	selector := map[string]string{"app": "redis", "component": "redis", "shard": "0"}
-	sts := newRolloutStatefulSet("sample-shard-0", "default", selector, 3, "rev-old", "rev-new")
-	pod0 := newReadyRolloutPod("sample-shard-0-0", "default", selector, "rev-old")
-	pod1 := newReadyRolloutPod("sample-shard-0-1", "default", selector, "rev-old")
-	pod2 := newReadyRolloutPod("sample-shard-0-2", "default", selector, "rev-old")
+	sts := newRolloutStatefulSet("sample-shard-0", namespace, selector, 3, "rev-old", "rev-new")
+	pod0 := newReadyRolloutPod("sample-shard-0-0", selector, "rev-old")
+	pod1 := newReadyRolloutPod("sample-shard-0-1", selector, "rev-old")
+	pod2 := newReadyRolloutPod("sample-shard-0-2", selector, "rev-old")
 
 	admin := &rollingAdminClient{
 		clusterShardObservations: []appinterfaces.ClusterShardObservation{
@@ -179,15 +182,15 @@ func TestReconcileRollingUpdateClusterDeletesReplicaBeforePrimaryAndPrefersUpdat
 	if !handled {
 		t.Fatalf("expected rolling update to handle outdated cluster replica")
 	}
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "sample-shard-0-2"}, &corev1.Pod{}); err == nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: "sample-shard-0-2"}, &corev1.Pod{}); err == nil {
 		t.Fatalf("expected highest-ordinal cluster replica to be deleted first")
 	}
 	if admin.requestClusterFailoverCalls != 0 {
 		t.Fatalf("unexpected cluster failover request count: got %d want 0", admin.requestClusterFailoverCalls)
 	}
 
-	pod1 = newReadyRolloutPod("sample-shard-0-1", "default", selector, "rev-new")
-	pod2 = newReadyRolloutPod("sample-shard-0-2", "default", selector, "rev-new")
+	pod1 = newReadyRolloutPod("sample-shard-0-1", selector, "rev-new")
+	pod2 = newReadyRolloutPod("sample-shard-0-2", selector, "rev-new")
 	r, kubeClient = newRollingTestReconciler(t, admin, sts, pod0, pod1, pod2)
 	handled, _, err = r.reconcileRollingUpdate(context.Background(), redis)
 	if err != nil {
@@ -202,7 +205,7 @@ func TestReconcileRollingUpdateClusterDeletesReplicaBeforePrimaryAndPrefersUpdat
 	if admin.lastClusterFailoverOrdinal != 2 {
 		t.Fatalf("expected updated highest-ordinal replica to be selected, got %d", admin.lastClusterFailoverOrdinal)
 	}
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "sample-shard-0-0"}, &corev1.Pod{}); err != nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: "sample-shard-0-0"}, &corev1.Pod{}); err != nil {
 		t.Fatalf("expected old primary pod to remain before switchover completes: %v", err)
 	}
 
@@ -224,7 +227,7 @@ func TestReconcileRollingUpdateClusterDeletesReplicaBeforePrimaryAndPrefersUpdat
 	if !handled {
 		t.Fatalf("expected rolling update to delete former primary after switchover")
 	}
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "sample-shard-0-0"}, &corev1.Pod{}); err == nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: "sample-shard-0-0"}, &corev1.Pod{}); err == nil {
 		t.Fatalf("expected former primary pod to be deleted after switchover converged")
 	}
 }
@@ -322,7 +325,7 @@ func newRolloutStatefulSet(name, namespace string, selector map[string]string, r
 	}
 }
 
-func newReadyRolloutPod(name, namespace string, labels map[string]string, revision string) *corev1.Pod {
+func newReadyRolloutPod(name string, labels map[string]string, revision string) *corev1.Pod {
 	podLabels := make(map[string]string, len(labels)+1)
 	for key, value := range labels {
 		podLabels[key] = value
@@ -331,7 +334,7 @@ func newReadyRolloutPod(name, namespace string, labels map[string]string, revisi
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: namespace,
+			Namespace: "default",
 			Labels:    podLabels,
 		},
 		Status: corev1.PodStatus{

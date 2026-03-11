@@ -78,11 +78,8 @@ type statefulSetStatusSnapshot struct {
 func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	redis := &redisv1alpha1.Redis{}
-	if err := r.Kube.Get(ctx, req.NamespacedName, redis); err != nil {
-		if errors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
+	redis, err := r.loadRedisForReconcile(ctx, req)
+	if err != nil || redis == nil {
 		return ctrl.Result{}, err
 	}
 
@@ -93,121 +90,107 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	before := redis.DeepCopy()
 	r.ensureModeRuntimeStatus(redis)
 
-	if err := plan.ValidateSemantic(redis); err != nil {
-		r.emitWarning(redis, "InvalidSpec", err.Error())
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonInvalidSpec, err.Error())
-		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-			return ctrl.Result{}, patchErr
-		}
-		return ctrl.Result{}, err
-	}
-
-	desired, err := plan.BuildDesiredState(redis)
-	if err != nil {
-		r.emitWarning(redis, "BuildFailed", err.Error())
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonBuildFailed, err.Error())
-		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-			return ctrl.Result{}, patchErr
-		}
-		return ctrl.Result{}, err
-	}
-
-	for _, obj := range desired.Objects {
-		if err := kubeutil.SetControllerOwner(redis, r.Scheme, obj); err != nil {
-			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonApplyFailed, err.Error())
-			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-				return ctrl.Result{}, patchErr
-			}
-			return ctrl.Result{}, err
-		}
-		if err := r.Kube.Apply(ctx, obj); err != nil {
-			applyErr := fmt.Errorf("apply %T/%s failed: %w", obj, client.ObjectKeyFromObject(obj), err)
-			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonApplyFailed, applyErr.Error())
-			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-				return ctrl.Result{}, patchErr
-			}
-			return ctrl.Result{}, applyErr
-		}
-	}
-
-	redis.Status.Endpoints = desired.Endpoints
-	if err := r.setObservedReadyReplicaCounts(ctx, redis); err != nil {
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, err.Error())
-		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-			return ctrl.Result{}, patchErr
-		}
-		return ctrl.Result{}, err
+	if err := r.prepareDesiredState(ctx, redis); err != nil {
+		return r.patchAndReturn(ctx, before, redis, ctrl.Result{}, err)
 	}
 
 	switch redis.Spec.Mode {
 	case redisv1alpha1.RedisModeCluster:
 		scalingHandled, scalingResult := r.reconcileClusterScaling(ctx, redis)
 		if scalingHandled {
-			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-				return ctrl.Result{}, patchErr
-			}
-			return scalingResult, nil
+			return r.patchAndReturn(ctx, before, redis, scalingResult, nil)
 		}
 	}
 
 	rollingHandled, rollingResult, err := r.reconcileRollingUpdate(ctx, redis)
 	if err != nil {
-		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-			return ctrl.Result{}, patchErr
-		}
-		return ctrl.Result{}, err
+		return r.patchAndReturn(ctx, before, redis, ctrl.Result{}, err)
 	}
 	if rollingHandled {
-		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-			return ctrl.Result{}, patchErr
-		}
-		return rollingResult, nil
+		return r.patchAndReturn(ctx, before, redis, rollingResult, nil)
 	}
 
 	runtimeReady, waitReason, err := r.runtimePrerequisitesReady(ctx, redis)
 	if err != nil {
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, err.Error())
-		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-			return ctrl.Result{}, patchErr
-		}
-		return ctrl.Result{}, err
+		return r.setUnhealthyAndPatch(ctx, before, redis, redisv1alpha1.ReasonReconciling, err.Error(), err)
 	}
 	if !runtimeReady {
-		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, waitReason)
-		if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-			return ctrl.Result{}, patchErr
-		}
 		log.Info("Runtime prerequisites are not ready, requeue", "reason", waitReason)
-		return ctrl.Result{RequeueAfter: runtimePrerequisitesRequeueAfter}, nil
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, waitReason)
+		return r.patchAndReturn(ctx, before, redis, ctrl.Result{RequeueAfter: runtimePrerequisitesRequeueAfter}, nil)
 	}
+
+	if err := r.healRuntime(ctx, redis); err != nil {
+		return r.patchAndReturn(ctx, before, redis, ctrl.Result{}, err)
+	}
+
+	r.setHealthHealthy(redis, "Runtime health checks passed.")
+	return r.patchAndReturn(ctx, before, redis, ctrl.Result{}, nil)
+}
+
+func (r *RedisReconciler) loadRedisForReconcile(ctx context.Context, req ctrl.Request) (*redisv1alpha1.Redis, error) {
+	redis := &redisv1alpha1.Redis{}
+	if err := r.Kube.Get(ctx, req.NamespacedName, redis); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return redis, nil
+}
+
+func (r *RedisReconciler) prepareDesiredState(ctx context.Context, redis *redisv1alpha1.Redis) error {
+	if err := plan.ValidateSemantic(redis); err != nil {
+		r.emitWarning(redis, "InvalidSpec", err.Error())
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonInvalidSpec, err.Error())
+		return err
+	}
+
+	desired, err := plan.BuildDesiredState(redis)
+	if err != nil {
+		r.emitWarning(redis, "BuildFailed", err.Error())
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonBuildFailed, err.Error())
+		return err
+	}
+
+	for _, obj := range desired.Objects {
+		if err := kubeutil.SetControllerOwner(redis, r.Scheme, obj); err != nil {
+			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonApplyFailed, err.Error())
+			return err
+		}
+		if err := r.Kube.Apply(ctx, obj); err != nil {
+			applyErr := fmt.Errorf("apply %T/%s failed: %w", obj, client.ObjectKeyFromObject(obj), err)
+			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonApplyFailed, applyErr.Error())
+			return applyErr
+		}
+	}
+
+	redis.Status.Endpoints = desired.Endpoints
+	if err := r.setObservedReadyReplicaCounts(ctx, redis); err != nil {
+		r.setHealthUnhealthy(redis, redisv1alpha1.ReasonReconciling, err.Error())
+		return err
+	}
+	return nil
+}
+
+func (r *RedisReconciler) healRuntime(ctx context.Context, redis *redisv1alpha1.Redis) error {
+	log := logf.FromContext(ctx)
 
 	switch redis.Spec.Mode {
 	case redisv1alpha1.RedisModeCluster:
 		if err := clusterTopology.HealRuntime(ctx, r.RedisAdmin, redis.Namespace, redis.Name); err != nil {
 			log.Error(err, "cluster bootstrap failed")
 			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonClusterCheckFailed, err.Error())
-			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-				return ctrl.Result{}, patchErr
-			}
-			return ctrl.Result{}, err
+			return err
 		}
 	case redisv1alpha1.RedisModeFailover:
 		if err := failoverTopology.HealRuntime(ctx, r.RedisAdmin, redis.Namespace, redis.Name); err != nil {
 			log.Error(err, "failover heal failed")
 			r.setHealthUnhealthy(redis, redisv1alpha1.ReasonFailoverCheckFailed, err.Error())
-			if patchErr := r.patchStatusIfChanged(ctx, before, redis); patchErr != nil {
-				return ctrl.Result{}, patchErr
-			}
-			return ctrl.Result{}, err
+			return err
 		}
 	}
-
-	r.setHealthHealthy(redis, "Runtime health checks passed.")
-	if err := r.patchStatusIfChanged(ctx, before, redis); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return nil
 }
 
 func (r *RedisReconciler) runtimePrerequisitesReady(ctx context.Context, redis *redisv1alpha1.Redis) (bool, string, error) {
@@ -347,6 +330,29 @@ func (r *RedisReconciler) patchStatusIfChanged(ctx context.Context, before, afte
 		return nil
 	}
 	return r.Kube.PatchStatus(ctx, after, client.MergeFrom(before))
+}
+
+func (r *RedisReconciler) patchAndReturn(
+	ctx context.Context,
+	before, after *redisv1alpha1.Redis,
+	result ctrl.Result,
+	returnErr error,
+) (ctrl.Result, error) {
+	if err := r.patchStatusIfChanged(ctx, before, after); err != nil {
+		return ctrl.Result{}, err
+	}
+	return result, returnErr
+}
+
+func (r *RedisReconciler) setUnhealthyAndPatch(
+	ctx context.Context,
+	before, after *redisv1alpha1.Redis,
+	reason redisv1alpha1.RedisHealthReason,
+	message string,
+	returnErr error,
+) (ctrl.Result, error) {
+	r.setHealthUnhealthy(after, reason, message)
+	return r.patchAndReturn(ctx, before, after, ctrl.Result{}, returnErr)
 }
 
 func (r *RedisReconciler) setHealthUnhealthy(redis *redisv1alpha1.Redis, reason redisv1alpha1.RedisHealthReason, message string) {
