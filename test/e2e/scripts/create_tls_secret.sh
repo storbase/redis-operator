@@ -11,6 +11,11 @@ if [ "$#" -lt 1 ]; then
   exit 1
 fi
 
+if kubectl -n "${namespace}" get secret "${secret_name}" >/dev/null 2>&1; then
+  echo "secret/${secret_name} already exists"
+  exit 0
+fi
+
 workdir="$(mktemp -d)"
 cleanup() {
   rm -rf "${workdir}"
@@ -52,4 +57,3 @@ kubectl -n "${namespace}" create secret generic "${secret_name}" \
   --from-file=tls.key="${workdir}/tls.key" \
   --from-file=ca.crt="${workdir}/ca.crt" \
   --dry-run=client -o yaml | kubectl apply -f -
-

@@ -47,6 +47,7 @@ run_in_pod() {
   kubectl -n "$namespace" exec "$seed_pod" -- env \
     SEED_HOST="$seed_host" \
     SEED_PORT="$seed_port" \
+    ACTION="$action" \
     KEY_PREFIX="$key_prefix" \
     KEY_COUNT="$key_count" \
     REDIS_PASSWORD="$redis_password" \
@@ -159,7 +160,7 @@ run_in_pod '
     fi
   done
 
-  if [ "$action" = "count" ]; then
+  if [ "$ACTION" = "count" ]; then
     if [ "$existing_count" != "$KEY_COUNT" ]; then
       echo "data count check failed: expected=${KEY_COUNT} actual=${existing_count}"
       exit 1
