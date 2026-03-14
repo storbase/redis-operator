@@ -22,11 +22,11 @@ announce_bus_port="16379"
 	if len(externalEndpoints) > 0 {
 		builder.WriteString("case \"${ordinal}\" in\n")
 		for _, endpoint := range externalEndpoints {
-			builder.WriteString(fmt.Sprintf("%d)\n", endpoint.Ordinal))
-			builder.WriteString(fmt.Sprintf("  announce_host=\"%s\"\n", endpoint.Host))
-			builder.WriteString(fmt.Sprintf("  announce_ip=\"%s\"\n", endpoint.Host))
-			builder.WriteString(fmt.Sprintf("  announce_port=\"%d\"\n", endpoint.Port))
-			builder.WriteString(fmt.Sprintf("  announce_bus_port=\"%d\"\n", endpoint.BusPort))
+			fmt.Fprintf(&builder, "%d)\n", endpoint.Ordinal)
+			fmt.Fprintf(&builder, "  announce_host=\"%s\"\n", endpoint.Host)
+			fmt.Fprintf(&builder, "  announce_ip=\"%s\"\n", endpoint.Host)
+			fmt.Fprintf(&builder, "  announce_port=\"%d\"\n", endpoint.Port)
+			fmt.Fprintf(&builder, "  announce_bus_port=\"%d\"\n", endpoint.BusPort)
 			builder.WriteString("  ;;\n")
 		}
 		builder.WriteString("esac\n")
@@ -58,9 +58,9 @@ announce_port="6379"
 	if len(externalEndpoints) > 0 {
 		builder.WriteString("case \"${ordinal}\" in\n")
 		for _, endpoint := range externalEndpoints {
-			builder.WriteString(fmt.Sprintf("%d)\n", endpoint.Ordinal))
-			builder.WriteString(fmt.Sprintf("  announce_host=\"%s\"\n", endpoint.Host))
-			builder.WriteString(fmt.Sprintf("  announce_port=\"%d\"\n", endpoint.Port))
+			fmt.Fprintf(&builder, "%d)\n", endpoint.Ordinal)
+			fmt.Fprintf(&builder, "  announce_host=\"%s\"\n", endpoint.Host)
+			fmt.Fprintf(&builder, "  announce_port=\"%d\"\n", endpoint.Port)
 			builder.WriteString("  ;;\n")
 		}
 		builder.WriteString("esac\n")

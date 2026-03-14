@@ -1,6 +1,8 @@
 package manifests
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -23,6 +25,7 @@ type RedisStatefulSetOptions struct {
 	Storage       redisv1alpha1.StorageSpec
 	Command       string
 	ConfigMapName string
+	ConfigData    string
 	TLSSecretName string
 }
 
@@ -36,6 +39,7 @@ type SentinelStatefulSetOptions struct {
 	Policy              redisv1alpha1.PodPolicy
 	MasterName          string
 	ConfigMapName       string
+	ConfigData          string
 	RedisPasswordRef    *corev1.SecretKeySelector
 	SentinelPasswordRef *corev1.SecretKeySelector
 	Image               string
@@ -43,6 +47,11 @@ type SentinelStatefulSetOptions struct {
 	TLSSecretName       string
 	ExternalEndpoints   []redisv1alpha1.ExternalNodeAddress
 }
+
+const (
+	redisConfigHashAnnotationKey    = "redis.storbase.io/redis-config-hash"
+	sentinelConfigHashAnnotationKey = "redis.storbase.io/sentinel-config-hash"
+)
 
 // NewRedisStatefulSet builds a redis StatefulSet for either cluster or failover mode.
 func NewRedisStatefulSet(redis *redisv1alpha1.Redis, opts RedisStatefulSetOptions) *appsv1.StatefulSet {
@@ -61,9 +70,15 @@ func NewRedisStatefulSet(redis *redisv1alpha1.Redis, opts RedisStatefulSetOption
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName: opts.ServiceName,
 			Replicas:    int32Ptr(replicas),
-			Selector:    &metav1.LabelSelector{MatchLabels: opts.Labels},
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.OnDeleteStatefulSetStrategyType,
+			},
+			Selector: &metav1.LabelSelector{MatchLabels: opts.Labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: opts.Labels},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      opts.Labels,
+					Annotations: configHashAnnotations(redisConfigHashAnnotationKey, opts.ConfigData),
+				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{redisContainer},
 					Volumes: []corev1.Volume{
@@ -147,9 +162,15 @@ func NewSentinelStatefulSet(opts SentinelStatefulSetOptions) *appsv1.StatefulSet
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName: opts.ServiceName,
 			Replicas:    int32Ptr(replicas),
-			Selector:    &metav1.LabelSelector{MatchLabels: opts.Labels},
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.OnDeleteStatefulSetStrategyType,
+			},
+			Selector: &metav1.LabelSelector{MatchLabels: opts.Labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: opts.Labels},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      opts.Labels,
+					Annotations: configHashAnnotations(sentinelConfigHashAnnotationKey, opts.ConfigData),
+				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{container},
 					Volumes: []corev1.Volume{{
@@ -279,6 +300,16 @@ func int32Ptr(v int32) *int32 {
 	return &v
 }
 
+func configHashAnnotations(key, content string) map[string]string {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(content))
+	return map[string]string{
+		key: hex.EncodeToString(sum[:]),
+	}
+}
+
 func renderSentinelCommand(externalEndpoints []redisv1alpha1.ExternalNodeAddress) string {
 	var builder strings.Builder
 	builder.WriteString(`set -eu
@@ -290,9 +321,9 @@ announce_port=""
 	if len(externalEndpoints) > 0 {
 		builder.WriteString("case \"${ordinal}\" in\n")
 		for _, endpoint := range externalEndpoints {
-			builder.WriteString(fmt.Sprintf("%d)\n", endpoint.Ordinal))
-			builder.WriteString(fmt.Sprintf("  announce_ip=\"%s\"\n", endpoint.Host))
-			builder.WriteString(fmt.Sprintf("  announce_port=\"%d\"\n", endpoint.Port))
+			fmt.Fprintf(&builder, "%d)\n", endpoint.Ordinal)
+			fmt.Fprintf(&builder, "  announce_ip=\"%s\"\n", endpoint.Host)
+			fmt.Fprintf(&builder, "  announce_port=\"%d\"\n", endpoint.Port)
 			builder.WriteString("  ;;\n")
 		}
 		builder.WriteString("esac\n")

@@ -15,6 +15,9 @@ Deploy and operate Redis on Kubernetes with one `Redis` CRD in two modes:
 - [x] Supports failover redis scale in/out
 - [x] Supports failover external access with NodePort and Sentinel-native discovery
 - [x] Supports cluster external access with NodePort and native announce settings
+- [x] Supports rolling update
+
+More detail see [docs](docs/administration.md)
 
 ## Compatibility
 

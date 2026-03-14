@@ -10,8 +10,8 @@ redis_password="${6:-}"
 seed_host_override="${7:-}"
 seed_port_override="${8:-6379}"
 
-if [ "$action" != "put" ] && [ "$action" != "check" ]; then
-  echo "unsupported action: $action (expected put|check)"
+if [ "$action" != "put" ] && [ "$action" != "check" ] && [ "$action" != "count" ]; then
+  echo "unsupported action: $action (expected put|check|count)"
   exit 1
 fi
 
@@ -47,6 +47,7 @@ run_in_pod() {
   kubectl -n "$namespace" exec "$seed_pod" -- env \
     SEED_HOST="$seed_host" \
     SEED_PORT="$seed_port" \
+    ACTION="$action" \
     KEY_PREFIX="$key_prefix" \
     KEY_COUNT="$key_count" \
     REDIS_PASSWORD="$redis_password" \
@@ -149,7 +150,26 @@ run_in_pod '
     exit 1
   fi
 
-  missing_count=0
+  existing_count=0
+
+  for ((i=0; i<KEY_COUNT; i++)); do
+    key="${KEY_PREFIX}:k:${i}"
+    exists="$(run_redis EXISTS "$key" | tr -d "\r\n[:space:]")"
+    if [ "$exists" = "1" ]; then
+      existing_count=$((existing_count + 1))
+    fi
+  done
+
+  if [ "$ACTION" = "count" ]; then
+    if [ "$existing_count" != "$KEY_COUNT" ]; then
+      echo "data count check failed: expected=${KEY_COUNT} actual=${existing_count}"
+      exit 1
+    fi
+    echo "data count assertions passed"
+    exit 0
+  fi
+
+  missing_count=$((KEY_COUNT - existing_count))
   mismatch_count=0
   missing_samples=()
   mismatch_samples=()
@@ -158,7 +178,6 @@ run_in_pod '
     key="${KEY_PREFIX}:k:${i}"
     exists="$(run_redis EXISTS "$key" | tr -d "\r\n[:space:]")"
     if [ "$exists" != "1" ]; then
-      missing_count=$((missing_count + 1))
       if [ "${#missing_samples[@]}" -lt 10 ]; then
         missing_samples+=("$key")
       fi

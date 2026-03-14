@@ -1,0 +1,92 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: redis-failover-rolling-update
+spec:
+  steps:
+  - name: apply-and-seed-failover
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          bash ../../scripts/create_tls_secret.sh \
+            redis-e2e \
+            redis-failover-tls \
+            redis-failover.redis-e2e.svc.cluster.local \
+            '*.redis-failover-redis-headless.redis-e2e.svc.cluster.local' \
+            '*.redis-failover-sentinel.redis-e2e.svc.cluster.local' \
+            'redis-failover-redis.redis-e2e.svc.cluster.local' \
+            'redis-failover-sentinel.redis-e2e.svc.cluster.local'
+    - apply:
+        file: ../failover/redis.yaml
+    - assert:
+        timeout: 10m
+        file: ../failover/assert-ready.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_failover_data.sh redis-e2e redis-failover mymaster put redis-failover:e2e:rolling:v1 200 failover-redis-pass-123 failover-sentinel-pass-123
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          kubectl -n redis-e2e get pods -l 'app.kubernetes.io/instance=redis-failover,app.kubernetes.io/component=redis' \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.metadata.uid}{"\n"}{end}' | sort >/tmp/redis-failover-rolling-redis.before
+          kubectl -n redis-e2e get pods -l 'app.kubernetes.io/instance=redis-failover,app.kubernetes.io/component=sentinel' \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.metadata.uid}{"\n"}{end}' | sort >/tmp/redis-failover-rolling-sentinel.before
+
+  - name: trigger-and-verify-failover-rolling-update
+    try:
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+          kubectl -n redis-e2e patch redis redis-failover --type=merge -p '{"spec":{"redisConfig":["save 300 10"],"sentinelConfig":["sentinel down-after-milliseconds mymaster 7000","sentinel failover-timeout mymaster 90000"]}}'
+    - assert:
+        timeout: 15m
+        file: ../failover/assert-ready.yaml
+    - script:
+        timeout: 10m
+        content: |
+          set -eu
+          bash ../../scripts/assert_failover_data.sh redis-e2e redis-failover mymaster count redis-failover:e2e:rolling:v1 200 failover-redis-pass-123 failover-sentinel-pass-123
+    - script:
+        timeout: 2m
+        content: |
+          set -eu
+
+          compare_changed() {
+            local before_file="$1"
+            local after_file="$2"
+            local group="$3"
+
+            before_count="$(wc -l <"$before_file" | tr -d " ")"
+            after_count="$(wc -l <"$after_file" | tr -d " ")"
+            if [ "$before_count" != "$after_count" ]; then
+              echo "${group} pod count changed unexpectedly: before=${before_count} after=${after_count}"
+              exit 1
+            fi
+
+            while IFS='=' read -r pod_name before_uid; do
+              [ -n "$pod_name" ] || continue
+              after_uid="$(awk -F= -v target="$pod_name" '$1 == target {print $2}' "$after_file")"
+              if [ -z "$after_uid" ]; then
+                echo "missing ${group} pod after rollout: ${pod_name}"
+                exit 1
+              fi
+              if [ "$after_uid" = "$before_uid" ]; then
+                echo "${group} pod was not recreated: ${pod_name}"
+                exit 1
+              fi
+            done <"$before_file"
+          }
+
+          kubectl -n redis-e2e get pods -l 'app.kubernetes.io/instance=redis-failover,app.kubernetes.io/component=redis' \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.metadata.uid}{"\n"}{end}' | sort >/tmp/redis-failover-rolling-redis.after
+          kubectl -n redis-e2e get pods -l 'app.kubernetes.io/instance=redis-failover,app.kubernetes.io/component=sentinel' \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.metadata.uid}{"\n"}{end}' | sort >/tmp/redis-failover-rolling-sentinel.after
+
+          compare_changed /tmp/redis-failover-rolling-redis.before /tmp/redis-failover-rolling-redis.after redis
+          compare_changed /tmp/redis-failover-rolling-sentinel.before /tmp/redis-failover-rolling-sentinel.after sentinel

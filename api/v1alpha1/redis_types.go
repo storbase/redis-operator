@@ -54,6 +54,7 @@ const (
 	ReasonInvalidSpec         RedisHealthReason = "InvalidSpec"
 	ReasonBuildFailed         RedisHealthReason = "BuildFailed"
 	ReasonApplyFailed         RedisHealthReason = "ApplyFailed"
+	ReasonRollingUpdate       RedisHealthReason = "RollingUpdate"
 	ReasonClusterCheckFailed  RedisHealthReason = "ClusterCheckFailed"
 	ReasonFailoverCheckFailed RedisHealthReason = "FailoverCheckFailed"
 	ReasonScaling             RedisHealthReason = "Scaling"
