@@ -139,7 +139,7 @@ jobs:
 
       - name: Upload e2e artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-artifacts-${{ matrix.suite }}
           path: test/e2e/artifacts/pr/${{ matrix.suite }}
