@@ -318,7 +318,7 @@ jobs:
           make build-installer IMG=${IMAGE_REPO}:${{ needs.prepare-tag.outputs.operator_tag }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare-tag.outputs.operator_tag }}
           generate_release_notes: true
