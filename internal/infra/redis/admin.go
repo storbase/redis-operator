@@ -189,16 +189,16 @@ func parseInfoFields(raw string) map[string]string {
 	return fields
 }
 
-func parseIntField(fields map[string]string, key string) (int, error) {
+func parseIntField(fields map[string]string, key string) (int32, error) {
 	value, ok := fields[key]
 	if !ok {
 		return 0, fmt.Errorf("field %q not found", key)
 	}
-	n, err := strconv.Atoi(value)
+	n, err := strconv.ParseInt(value, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("parse field %q failed: %w", key, err)
 	}
-	return n, nil
+	return int32(n), nil
 }
 
 func splitAddress(addr string) (string, string, error) {
